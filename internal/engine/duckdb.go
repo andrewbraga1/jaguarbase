@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -10,12 +11,10 @@ import (
 	_ "github.com/marcboeker/go-duckdb"
 )
 
-// DuckDBEngine manages the embedded C++ analytical database dynamically.
 type DuckDBEngine struct {
 	db *sql.DB
 }
 
-// NewDuckDBEngine initializes an embedded DuckDB instance.
 func NewDuckDBEngine(ctx context.Context, dsn string) (*DuckDBEngine, error) {
 	db, err := sql.Open("duckdb", dsn)
 	if err != nil {
@@ -26,25 +25,30 @@ func NewDuckDBEngine(ctx context.Context, dsn string) (*DuckDBEngine, error) {
 		return nil, fmt.Errorf("failed to ping duckdb: %w", err)
 	}
 
+	// Bootstrap Vector Search Extension (VSS)
+	_, _ = db.ExecContext(ctx, "INSTALL vss; LOAD vss;")
+
 	return &DuckDBEngine{db: db}, nil
 }
 
-// Close gracefully shuts down the database.
 func (e *DuckDBEngine) Close() error {
 	return e.db.Close()
 }
 
-// InitSchema dynamically creates a columnar table based on the YAML schema.
 func (e *DuckDBEngine) InitSchema(ctx context.Context, tableName string, schema []config.ColumnDef) error {
 	var colsBuilder strings.Builder
 	for _, col := range schema {
-		// Map YAML types to DuckDB SQL types using tagged switch (QF1003 fix)
-		sqlType := "VARCHAR" // Default fallback
+		sqlType := "VARCHAR"
 		switch col.Type {
 		case "integer":
 			sqlType = "INTEGER"
 		case "boolean":
 			sqlType = "BOOLEAN"
+		case "vector":
+			if col.Dimensions <= 0 {
+				return fmt.Errorf("vector column '%s' requires positive dimensions", col.Column)
+			}
+			sqlType = fmt.Sprintf("FLOAT[%d]", col.Dimensions)
 		}
 
 		colsBuilder.WriteString(col.Column)
@@ -53,7 +57,6 @@ func (e *DuckDBEngine) InitSchema(ctx context.Context, tableName string, schema 
 		colsBuilder.WriteString(", ")
 	}
 
-	// Always append the system security flag
 	colsBuilder.WriteString("_is_tainted BOOLEAN")
 
 	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s);", tableName, colsBuilder.String())
@@ -64,13 +67,11 @@ func (e *DuckDBEngine) InitSchema(ctx context.Context, tableName string, schema 
 	return nil
 }
 
-// InsertBatch dynamically prepares and executes a bulk insert for maps.
 func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema []config.ColumnDef, rows []map[string]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	// Build dynamic SQL components without inefficient concatenation
 	var colsBuilder, placeholdersBuilder strings.Builder
 	for _, col := range schema {
 		colsBuilder.WriteString(col.Column)
@@ -82,7 +83,6 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, colsBuilder.String(), placeholdersBuilder.String())
 
-	// Fail-Closed: Atomicity
 	tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
@@ -96,12 +96,19 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	defer stmt.Close()
 
 	for _, rowMap := range rows {
-		// Extract values in the exact order of the schema
 		args := make([]any, 0, len(schema)+1)
 		for _, col := range schema {
-			args = append(args, rowMap[col.Column])
+			val := rowMap[col.Column]
+
+			// database/sql unsupported type fix: serialize slices to JSON strings
+			if col.Type == "vector" {
+				if b, err := json.Marshal(val); err == nil {
+					val = string(b)
+				}
+			}
+			args = append(args, val)
 		}
-		// Append system flag
+
 		isTainted := false
 		if val, ok := rowMap["_is_tainted"].(bool); ok {
 			isTainted = val
@@ -116,7 +123,31 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	return tx.Commit()
 }
 
-// QueryAllClean dynamically selects safe records and maps them back to generic structures.
+func (e *DuckDBEngine) QueryVector(ctx context.Context, tableName string, schema []config.ColumnDef, vectorCol string, queryVector []float32, limit int) ([]map[string]any, error) {
+	var colsBuilder strings.Builder
+	for _, col := range schema {
+		colsBuilder.WriteString(col.Column)
+		colsBuilder.WriteString(", ")
+	}
+	colsBuilder.WriteString("_is_tainted")
+
+	// Convert queryVector to string for safe cross-boundary CGO parameter passing
+	vectorBytes, _ := json.Marshal(queryVector)
+
+	query := fmt.Sprintf(
+		"SELECT %s FROM %s WHERE _is_tainted = false ORDER BY array_cosine_distance(%s, ?::FLOAT[%d]) ASC LIMIT %d",
+		colsBuilder.String(), tableName, vectorCol, len(queryVector), limit,
+	)
+
+	dbRows, err := e.db.QueryContext(ctx, query, string(vectorBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute vector query: %w", err)
+	}
+	defer dbRows.Close()
+
+	return e.scanDynamicRows(dbRows)
+}
+
 func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, schema []config.ColumnDef) ([]map[string]any, error) {
 	var colsBuilder strings.Builder
 	for _, col := range schema {
@@ -133,6 +164,10 @@ func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, sche
 	}
 	defer dbRows.Close()
 
+	return e.scanDynamicRows(dbRows)
+}
+
+func (e *DuckDBEngine) scanDynamicRows(dbRows *sql.Rows) ([]map[string]any, error) {
 	columns, err := dbRows.Columns()
 	if err != nil {
 		return nil, err
@@ -141,7 +176,6 @@ func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, sche
 	cleanData := make([]map[string]any, 0, 10)
 
 	for dbRows.Next() {
-		// Dynamic scanning logic for unknown column structures
 		values := make([]any, len(columns))
 		valuePtrs := make([]any, len(columns))
 		for i := range values {
@@ -155,7 +189,6 @@ func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, sche
 		rowMap := make(map[string]any, len(columns))
 		for i, colName := range columns {
 			val := values[i]
-			// DuckDB might return []byte for strings in some generic setups, ensure safe casting
 			if b, ok := val.([]byte); ok {
 				rowMap[colName] = string(b)
 			} else {
@@ -165,7 +198,6 @@ func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, sche
 		cleanData = append(cleanData, rowMap)
 	}
 
-	// Prevent silent failures (sqlrowserr fix)
 	if err := dbRows.Err(); err != nil {
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}

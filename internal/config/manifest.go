@@ -7,10 +7,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ColumnDef defines the governance rules for a specific column.
+// ColumnDef defines the governance rules and types for a specific column.
 type ColumnDef struct {
 	Column     string `yaml:"column"`
 	Type       string `yaml:"type"`
+	Dimensions int    `yaml:"dimensions,omitempty"` // Used exclusively for 'vector' types (e.g., 1536)
 	Governance string `yaml:"governance"`
 }
 
