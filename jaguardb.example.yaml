@@ -1,0 +1,15 @@
+version: "1.0"
+sources:
+  - name: "secretario_postgres"
+    type: "postgres"
+    table: "support_tickets"
+    schema:
+      - column: "id"
+        type: "integer"
+        governance: "none"
+      - column: "customer_cpf"
+        type: "string"
+        governance: "pii_vault"
+      - column: "message"
+        type: "string"
+        governance: "untrusted_input"
