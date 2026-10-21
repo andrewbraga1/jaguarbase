@@ -4,43 +4,42 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/andrewbraga1/jaguarbase/internal/engine"
 	"github.com/andrewbraga1/jaguarbase/internal/security"
 )
 
 // CognitiveResponse is the standard Zero-Trust payload sent to the LLM agent via MCP.
 type CognitiveResponse struct {
-	Status       string          `json:"status"`
-	TotalRows    int             `json:"total_rows"`
-	Message      string          `json:"message,omitempty"`
-	Data         []engine.Ticket `json:"data,omitempty"`
-	SampleItems  []engine.Ticket `json:"sample_items,omitempty"`
-	HandoffProof string          `json:"handoff_proof,omitempty"`
+	Status       string           `json:"status"`
+	TotalRows    int              `json:"total_rows"`
+	Message      string           `json:"message,omitempty"`
+	Data         []map[string]any `json:"data,omitempty"`
+	SampleItems  []map[string]any `json:"sample_items,omitempty"`
+	HandoffProof string           `json:"handoff_proof,omitempty"`
 }
 
-// BuildResponse evaluates the token budget and signs the output payload.
-func BuildResponse(tickets []engine.Ticket, budget int, secretKey []byte) ([]byte, error) {
+// BuildResponse evaluates the token budget and signs the output payload dynamically.
+func BuildResponse(records []map[string]any, budget int, secretKey []byte) ([]byte, error) {
 	var resp CognitiveResponse
 
-	if len(tickets) > budget {
+	if len(records) > budget {
 		// Truncate to protect LLM context window
 		sampleSize := 2
-		if len(tickets) < 2 {
-			sampleSize = len(tickets)
+		if len(records) < 2 {
+			sampleSize = len(records)
 		}
 
 		resp = CognitiveResponse{
 			Status:      "COGNITIVE_OOM_PREVENTED",
-			TotalRows:   len(tickets),
+			TotalRows:   len(records),
 			Message:     "Payload exceeds cognitive budget. Please refine your query.",
-			SampleItems: tickets[:sampleSize],
+			SampleItems: records[:sampleSize],
 		}
 	} else {
 		// Full safe payload
 		resp = CognitiveResponse{
 			Status:    "SUCCESS",
-			TotalRows: len(tickets),
-			Data:      tickets,
+			TotalRows: len(records),
+			Data:      records,
 		}
 	}
 

@@ -4,14 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andrewbraga1/jaguarbase/internal/engine"
 	"github.com/andrewbraga1/jaguarbase/internal/pagination"
 )
 
 func TestCognitivePaginator(t *testing.T) {
 	secretKey := []byte("test-key")
-	mockData := []engine.Ticket{
-		{ID: 1, Message: "A"}, {ID: 2, Message: "B"}, {ID: 3, Message: "C"},
+	mockData := []map[string]any{
+		{"id": 1, "message": "A"},
+		{"id": 2, "message": "B"},
+		{"id": 3, "message": "C"},
 	}
 
 	t.Run("Protects LLM Context (OOM Prevented)", func(t *testing.T) {
