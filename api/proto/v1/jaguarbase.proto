@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package jaguarbase.v1;
+
+// Define where the protobuf compiler will output the generated Go code
+option go_package = "github.com/andrewbraga1/jaguarbase/pkg/api/v1/pb;pb";
+
+// EngineService exposes the core database operations via gRPC.
+service EngineService {
+    // VectorSearch performs a semantic similarity search using DuckDB VSS.
+    rpc VectorSearch(VectorRequest) returns (VectorResponse);
+    
+    // HealthCheck provides ultra-fast telemetry data for node monitoring.
+    rpc HealthCheck(PingRequest) returns (PingResponse);
+}
+
+message VectorRequest {
+    string table_name = 1;          // Target table defined in jaguardb.yaml
+    repeated float query_vector = 2; // The embedding array (e.g., 1536 dimensions)
+    int32 limit = 3;                // Top K results for pagination
+}
+
+message VectorResponse {
+    // Using 'bytes' instead of string to avoid heavy Garbage Collector allocations.
+    // The payload is a validated JSON array containing the clean rows.
+    bytes safe_payload = 1; 
+    
+    // Zero-Trust HMAC signature proving JaguarBase filtered PII and Prompt Injections.
+    string handoff_proof = 2; 
+    
+    int32 total_rows = 3;
+}
+
+message PingRequest {}
+
+message PingResponse {
+    string status = 1;
+    uint64 uptime_seconds = 2;
+    uint64 queries_executed = 3;
+    uint64 security_blocks = 4;
+}
