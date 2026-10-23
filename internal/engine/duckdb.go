@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/andrewbraga1/jaguarbase/internal/config"
@@ -72,16 +73,20 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 		return nil
 	}
 
-	var colsBuilder, placeholdersBuilder strings.Builder
+	// 1. Build columns and placeholders 100% dynamically based ONLY on the provided schema
+	var cols []string
+	var placeholders []string
 	for _, col := range schema {
-		colsBuilder.WriteString(col.Column)
-		colsBuilder.WriteString(", ")
-		placeholdersBuilder.WriteString("?, ")
+		cols = append(cols, col.Column)
+		placeholders = append(placeholders, "?")
 	}
-	colsBuilder.WriteString("_is_tainted")
-	placeholdersBuilder.WriteString("?")
 
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, colsBuilder.String(), placeholdersBuilder.String())
+	// strings.Join automatically handles trailing commas
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		tableName,
+		strings.Join(cols, ", "),
+		strings.Join(placeholders, ", "),
+	)
 
 	tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -96,24 +101,28 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	defer stmt.Close()
 
 	for _, rowMap := range rows {
-		args := make([]any, 0, len(schema)+1)
+		// The argument array size now matches the schema length exactly
+		args := make([]any, 0, len(schema))
 		for _, col := range schema {
 			val := rowMap[col.Column]
 
-			// database/sql unsupported type fix: serialize slices to JSON strings
-			if col.Type == "vector" {
-				if b, err := json.Marshal(val); err == nil {
+			switch v := val.(type) {
+			case []float32, []float64:
+				// 1. Automatically marshal known numeric slices
+				if b, err := json.Marshal(v); err == nil {
 					val = string(b)
+				}
+			default:
+				// If the schema says it's a vector or FLOAT array, force serialization.
+				colTypeUpper := strings.ToUpper(col.Type)
+				if strings.Contains(colTypeUpper, "VECTOR") || strings.HasPrefix(colTypeUpper, "FLOAT[") {
+					if b, err := json.Marshal(val); err == nil {
+						val = string(b)
+					}
 				}
 			}
 			args = append(args, val)
 		}
-
-		isTainted := false
-		if val, ok := rowMap["_is_tainted"].(bool); ok {
-			isTainted = val
-		}
-		args = append(args, isTainted)
 
 		if _, err := stmt.ExecContext(ctx, args...); err != nil {
 			return fmt.Errorf("failed to execute dynamic insert: %w", err)
@@ -203,4 +212,31 @@ func (e *DuckDBEngine) scanDynamicRows(dbRows *sql.Rows) ([]map[string]any, erro
 	}
 
 	return cleanData, nil
+}
+
+// AutoMigrate ensures that all tables mapped in the Manifest exist in DuckDB before receiving data.
+func (e *DuckDBEngine) AutoMigrate(ctx context.Context, manifest *config.Manifest) error {
+	// Iterate over all data sources declared in jaguardb.example.yaml
+	for _, src := range manifest.Sources {
+
+		// Dynamically build the query based on the table name from the manifest
+		// Note: In the future, "FLOAT[3]" can also come from a src.Dimension variable!
+		query := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			id VARCHAR,
+			content VARCHAR,
+			metadata JSON,
+			embedding FLOAT[3],
+			_is_tainted BOOLEAN
+		);`, src.Table)
+
+		// Replace 'e.db' with your actual sql.DB connection variable inside DuckDBEngine
+		if _, err := e.db.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("failed to create or verify table %s: %w", src.Table, err)
+		}
+
+		log.Printf("🛠️ AutoMigrate: Vector table '%s' successfully synchronized in DuckDB.", src.Table)
+	}
+
+	return nil
 }

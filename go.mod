@@ -4,6 +4,8 @@ go 1.26.0
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.12.3
 	github.com/marcboeker/go-duckdb v1.8.5
 	github.com/redis/go-redis/v9 v9.23.0
 	google.golang.org/grpc v1.84.0
