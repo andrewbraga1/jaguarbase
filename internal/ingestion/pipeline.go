@@ -1,15 +1,13 @@
 package ingestion
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 
+	"github.com/andrewbraga1/jaguarbase/internal/ai"
 	"github.com/andrewbraga1/jaguarbase/internal/config"
 	"github.com/andrewbraga1/jaguarbase/internal/engine"
 )
@@ -18,14 +16,16 @@ type Pipeline struct {
 	source   DataSource
 	duckDB   *engine.DuckDBEngine
 	manifest *config.Manifest
+	embedder ai.Embedder
 }
 
 // NewPipeline initializes the agnostic ingestion worker.
-func NewPipeline(source DataSource, duckDB *engine.DuckDBEngine, manifest *config.Manifest) *Pipeline {
+func NewPipeline(source DataSource, duckDB *engine.DuckDBEngine, manifest *config.Manifest, embedder ai.Embedder) *Pipeline {
 	return &Pipeline{
 		source:   source,
 		duckDB:   duckDB,
 		manifest: manifest,
+		embedder: embedder,
 	}
 }
 
@@ -84,7 +84,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 
 	// 3. Real Embedding Generation via Local Ollama
 	log.Printf("🧠 [Ollama] Generating %s embedding for record %s...", llmModel, record.ID)
-	vector, err := p.getOllamaEmbedding(ctx, safeMessage, llmModel)
+	vector, err := p.embedder.Generate(ctx, safeMessage, llmModel)
 	if err != nil {
 		log.Printf("❌ [Ollama Error]: Failed to generate embedding: %v", err)
 		return // Skip insertion if the AI is offline
@@ -114,39 +114,4 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	} else {
 		log.Printf("⚡ [Ingestion] Record %s vectorized and stored dynamically in '%s'.", record.ID, targetTable)
 	}
-}
-
-// getOllamaEmbedding calls the local Ollama REST API to vectorize the text.
-func (p *Pipeline) getOllamaEmbedding(ctx context.Context, text string, model string) ([]float32, error) {
-	reqBody := map[string]any{
-		"model":  model,
-		"prompt": text,
-	}
-	bodyBytes, _ := json.Marshal(reqBody)
-
-	// Calls the local Ollama instance running in the background or Docker
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:11434/api/embeddings", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to reach Ollama at localhost:11434: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ollama returned status code: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Embedding []float32 `json:"embedding"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode JSON response: %w", err)
-	}
-
-	return result.Embedding, nil
 }

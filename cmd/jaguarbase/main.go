@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/andrewbraga1/jaguarbase/internal/ai"
 	"github.com/andrewbraga1/jaguarbase/internal/config"
 	"github.com/andrewbraga1/jaguarbase/internal/engine"
 	"github.com/andrewbraga1/jaguarbase/internal/ingestion"
@@ -55,6 +56,8 @@ func main() {
 	pluggedDSN := os.Getenv("JAGUARBASE_DB_PLUGGED")
 	tableName := manifest.Sources[0].Table
 
+	llmHost := os.Getenv("LLM_API_URL")
+	aiAdapter := ai.NewAiAdapter(llmHost)
 	if pluggedDSN == "" {
 		log.Println("⚠️ JAGUARBASE_DB_PLUGGED not set. Ingestion pipeline bypassed.")
 	} else {
@@ -63,7 +66,7 @@ func main() {
 		if err != nil {
 			log.Printf("⚠️ Warning: Failed to plug database adapter: %v", err)
 		} else {
-			pipeline := ingestion.NewPipeline(adapter, dbEngine, manifest)
+			pipeline := ingestion.NewPipeline(adapter, dbEngine, manifest, aiAdapter)
 			go pipeline.Start(ctx) // Runs asynchronously
 		}
 	}
