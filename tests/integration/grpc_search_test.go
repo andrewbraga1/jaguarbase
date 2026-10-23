@@ -13,6 +13,11 @@ import (
 )
 
 func TestGRPCSemanticSearch(t *testing.T) {
+	// Skip this test in CI/CD environments since Ollama and the DB are not running
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping integration test in CI: Local Ollama daemon and DB are not available in the GitHub Actions runner.")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -26,18 +31,18 @@ func TestGRPCSemanticSearch(t *testing.T) {
 	}
 
 	aiAdapter := ai.NewAiAdapter(apiUrl)
-	queryText := "Meu painel travou e só fica girando a tela"
+	queryText := "My dashboard froze and the screen just keeps spinning"
 
-	t.Logf("🧠 Vetorizando a pergunta: '%s'...", queryText)
+	t.Logf("🧠 Vectorizing query: '%s'...", queryText)
 	queryVector, err := aiAdapter.Generate(ctx, queryText, model)
 	if err != nil {
-		t.Fatalf("❌ Falha na vetorização: %v", err)
+		t.Fatalf("❌ Vectorization failed: %v", err)
 	}
 
-	t.Log("⚡ Conectando ao gRPC do JaguarBase (:50051)...")
+	t.Log("⚡ Connecting to JaguarBase gRPC (:50051)...")
 	conn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		t.Fatalf("❌ Falha ao conectar no gRPC: %v", err)
+		t.Fatalf("❌ Failed to connect to gRPC: %v", err)
 	}
 	defer conn.Close()
 
@@ -52,22 +57,22 @@ func TestGRPCSemanticSearch(t *testing.T) {
 	startTime := time.Now()
 	res, err := client.VectorSearch(ctx, req)
 	if err != nil {
-		t.Fatalf("❌ Erro na chamada gRPC VectorSearch: %v", err)
+		t.Fatalf("❌ gRPC VectorSearch call failed: %v", err)
 	}
 
-	// Asserções (O teste só passa se as condições forem atendidas)
+	// Assertions to guarantee Zero-Trust compliance and data delivery
 	if res.TotalRows == 0 {
-		t.Errorf("⚠️ Esperava encontrar resultados, mas retornou 0 linhas.")
+		t.Errorf("⚠️ Expected to find results, but returned 0 rows.")
 	}
 	if res.HandoffProof == "" {
-		t.Errorf("⚠️ Handoff Proof (HMAC) veio vazio. Falha de segurança Zero-Trust.")
+		t.Errorf("⚠️ Handoff Proof (HMAC) is empty. Zero-Trust security validation failed.")
 	}
 	if len(res.SafePayload) == 0 {
-		t.Errorf("⚠️ Payload JSON veio vazio.")
+		t.Errorf("⚠️ JSON Payload is empty.")
 	}
 
-	t.Logf("🎉 Busca concluída em %v", time.Since(startTime))
-	t.Logf("📊 Linhas encontradas: %d", res.TotalRows)
+	t.Logf("🎉 Search completed in %v", time.Since(startTime))
+	t.Logf("📊 Rows found: %d", res.TotalRows)
 	t.Logf("🛡️ HMAC Proof: %s", res.HandoffProof)
 	t.Logf("📦 JSON Payload: %s", string(res.SafePayload))
 }

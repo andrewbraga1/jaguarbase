@@ -26,6 +26,7 @@ func TestGRPCEngineServer_Integration(t *testing.T) {
 	schema := []config.ColumnDef{
 		{Column: "id", Type: "integer"},
 		{Column: "content", Type: "string"},
+		{Column: "metadata", Type: "string"},
 		{Column: "embedding", Type: "vector", Dimensions: 3},
 	}
 	tableName := "test_knowledge"
