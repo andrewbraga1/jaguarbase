@@ -39,7 +39,7 @@ func main() {
 	defer cancel()
 
 	// 2. Initialize the Engine (DuckDB)
-	dbEngine, err := engine.NewDuckDBEngine(ctx, "?access_mode=read_write")
+	dbEngine, err := engine.NewDuckDBEngine(ctx, "storage.duckdb")
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
 	}
