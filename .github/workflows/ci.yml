@@ -30,5 +30,23 @@ jobs:
         # CGO_ENABLED=1 is required for go-duckdb compilation
         run: CGO_ENABLED=1 go test -v -race ./...
 
+      - name: Chaos Test 02 (Context Cancellation / Phantom Agent)
+        run: CGO_ENABLED=1 go run cmd/chaos/phantom_agent/main.go
+
+      - name: Chaos Test 03 (Load Shedding / Runaway Loop)
+        run: |
+          # 1. Start the JaguarBase server in the background
+          CGO_ENABLED=1 go run cmd/jaguarbase/main.go &
+          SERVER_PID=$!
+          
+          # 2. Give the server 3 seconds to initialize DuckDB and HTTP routes
+          sleep 3
+          
+          # 3. Fire the Chaos script
+          go run cmd/chaos/runaway_loop/main.go
+          
+          # 4. Gracefully kill the server after the test
+          kill $SERVER_PID
+
       - name: Build Binary (Dry Run)
         run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
