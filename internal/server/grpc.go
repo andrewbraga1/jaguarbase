@@ -47,7 +47,9 @@ func (s *GRPCEngineServer) VectorSearch(ctx context.Context, req *pb.VectorReque
 	}
 
 	// 2. Execute the Vector Search in DuckDB (assuming 'embedding' as the default vector column)
-	records, err := s.db.QueryVector(ctx, req.TableName, tableSchema, "embedding", req.QueryVector, int(req.Limit))
+	//records, err := s.db.QueryVector(ctx, req.TableName, tableSchema, "embedding", req.QueryVector, int(req.Limit))
+	// CÓDIGO CORRETO (Novo)
+	records, err := s.db.SemanticSearch(ctx, req.TableName, req.QueryVector, int(req.Limit))
 	if err != nil {
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}

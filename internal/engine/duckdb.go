@@ -248,3 +248,48 @@ func (e *DuckDBEngine) AutoMigrate(ctx context.Context, manifest *config.Manifes
 
 	return nil
 }
+
+// SemanticSearch performs a cosine similarity search on the vector database.
+func (e *DuckDBEngine) SemanticSearch(ctx context.Context, tableName string, queryVector []float32, limit int) ([]map[string]any, error) {
+	// Serialize the query vector to a JSON string (same defensive trick we used in InsertBatch)
+	vecBytes, _ := json.Marshal(queryVector)
+	vecStr := string(vecBytes)
+
+	// The magic of DuckDB: array_cosine_similarity calculates the distance between vectors
+	query := fmt.Sprintf(`
+		SELECT id, content, metadata, array_cosine_similarity(embedding, ?::FLOAT[%d]) as score
+		FROM %s 
+		ORDER BY score DESC 
+		LIMIT ?;
+	`, len(queryVector), tableName)
+
+	rows, err := e.db.QueryContext(ctx, query, vecStr, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute vector search: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var id, content, metadata any
+		var score float64
+
+		if err := rows.Scan(&id, &content, &metadata, &score); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		results = append(results, map[string]any{
+			"id":       id,
+			"content":  content,
+			"metadata": metadata,
+			"score":    score, // 1.0 means perfect match, 0.0 means completely unrelated
+		})
+	}
+
+	// ⚡ THE FIX: Check for errors that might have occurred during iteration
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over vector search results: %w", err)
+	}
+
+	return results, nil
+}
