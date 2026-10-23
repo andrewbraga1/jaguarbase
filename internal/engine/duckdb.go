@@ -81,6 +81,8 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 		placeholders = append(placeholders, "?")
 	}
 
+	cols = append(cols, "_is_tainted")
+	placeholders = append(placeholders, "?")
 	// strings.Join automatically handles trailing commas
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
@@ -124,6 +126,11 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 			args = append(args, val)
 		}
 
+		taintedVal, exists := rowMap["_is_tainted"]
+		if !exists {
+			taintedVal = false // Fallback: se não existir no map, assume limpo
+		}
+		args = append(args, taintedVal)
 		if _, err := stmt.ExecContext(ctx, args...); err != nil {
 			return fmt.Errorf("failed to execute dynamic insert: %w", err)
 		}
@@ -258,7 +265,8 @@ func (e *DuckDBEngine) SemanticSearch(ctx context.Context, tableName string, que
 	// The magic of DuckDB: array_cosine_similarity calculates the distance between vectors
 	query := fmt.Sprintf(`
 		SELECT id, content, metadata, array_cosine_similarity(embedding, ?::FLOAT[%d]) as score
-		FROM %s 
+		FROM %s
+		WHERE _is_tainted = false 
 		ORDER BY score DESC 
 		LIMIT ?;
 	`, len(queryVector), tableName)

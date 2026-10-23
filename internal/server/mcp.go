@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -92,11 +91,17 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Execute Vector Search
-	records, err := s.db.QueryVector(
-		context.Background(),
+	// records, err := s.db.QueryVector(
+	// 	context.Background(),
+	// 	req.Params.Arguments.TableName,
+	// 	tableSchema,
+	// 	"embedding",
+	// 	req.Params.Arguments.QueryVector,
+	// 	req.Params.Arguments.Limit,
+	// )
+	records, err := s.db.SemanticSearch(
+		r.Context(), // Usando o contexto do request HTTP
 		req.Params.Arguments.TableName,
-		tableSchema,
-		"embedding",
 		req.Params.Arguments.QueryVector,
 		req.Params.Arguments.Limit,
 	)

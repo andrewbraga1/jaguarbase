@@ -26,8 +26,9 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 	defer dbEngine.Close()
 
 	schema := []config.ColumnDef{
-		{Column: "id", Type: "integer"},
+		{Column: "id", Type: "string"},
 		{Column: "content", Type: "string"},
+		{Column: "metadata", Type: "string"}, // DuckDB aceita o JSON como string na inserção
 		{Column: "embedding", Type: "vector", Dimensions: 3},
 	}
 	tableName := "agent_knowledge"
@@ -36,9 +37,10 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 		t.Fatalf("InitSchema failed: %v", err)
 	}
 
+	// Inserindo dados com a coluna metadata
 	inputData := []map[string]any{
-		{"id": 1, "content": "Safe Agent Data", "embedding": []float32{1.0, 0.0, 0.0}, "_is_tainted": false},
-		{"id": 2, "content": "Tainted Agent Data", "embedding": []float32{1.0, 0.1, 0.0}, "_is_tainted": true},
+		{"id": "1", "content": "Safe Agent Data", "metadata": `{"role":"agent"}`, "embedding": []float32{1.0, 0.0, 0.0}, "_is_tainted": false},
+		{"id": "2", "content": "Tainted Agent Data", "metadata": `{"role":"hacker"}`, "embedding": []float32{1.0, 0.1, 0.0}, "_is_tainted": true},
 	}
 	_ = dbEngine.InsertBatch(ctx, tableName, schema, inputData)
 
