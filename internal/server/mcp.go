@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/andrewbraga1/jaguarbase/internal/config"
 	"github.com/andrewbraga1/jaguarbase/internal/engine"
@@ -40,19 +41,27 @@ type MCPResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// MCPServer exposes the database to AI agents via Model Context Protocol.
 type MCPServer struct {
-	db         *engine.DuckDBEngine
-	manifest   *config.Manifest
-	hmacSecret []byte
+	db              *engine.DuckDBEngine
+	manifest        *config.Manifest
+	hmacSecret      []byte
+	inFlightCounter atomic.Int32
+	inFlightLimit   int32
 }
 
-// NewMCPServer initializes the JSON-RPC interface for LLMs.
 func NewMCPServer(db *engine.DuckDBEngine, manifest *config.Manifest, secret []byte) *MCPServer {
+
+	// Fail-Safe: If the YAML doesn't define the limit, default to 100
+	limit := int32(manifest.Security.MCPInFlightLimit)
+	if limit <= 0 {
+		limit = 100
+	}
+
 	return &MCPServer{
-		db:         db,
-		manifest:   manifest,
-		hmacSecret: secret,
+		db:            db,
+		manifest:      manifest,
+		hmacSecret:    secret,
+		inFlightLimit: limit,
 	}
 }
 
@@ -60,6 +69,13 @@ func NewMCPServer(db *engine.DuckDBEngine, manifest *config.Manifest, secret []b
 func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	current := s.inFlightCounter.Add(1)
+	defer s.inFlightCounter.Add(-1)
+
+	if current > s.inFlightLimit {
+		http.Error(w, `{"jsonrpc": "2.0", "error": {"code": -32000, "message": "Server overloaded (Runaway Loop Protected)"}}`, http.StatusTooManyRequests)
 		return
 	}
 

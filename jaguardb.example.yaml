@@ -1,4 +1,6 @@
 version: "1.0"
+security:
+  mcp_in_flight_limit: 50
 sources:
   - name: "secretario_postgres"
     type: "postgres"

@@ -26,8 +26,14 @@ type SourceDef struct {
 
 // Manifest represents the entire jaguardb.yaml configuration.
 type Manifest struct {
-	Version string      `yaml:"version"`
-	Sources []SourceDef `yaml:"sources"`
+	Version  string      `yaml:"version" json:"version"`
+	Sources  []SourceDef `yaml:"sources" json:"sources"`
+	Security SecurityDef `yaml:"security" json:"security"`
+}
+
+// SecurityDef defines Edge and API security parameters.
+type SecurityDef struct {
+	MCPInFlightLimit int32 `yaml:"mcp_in_flight_limit" json:"mcp_in_flight_limit"`
 }
 
 // LoadManifest reads and parses the YAML configuration file.
