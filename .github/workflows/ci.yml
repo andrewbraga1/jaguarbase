@@ -1,0 +1,34 @@
+name: JaguarBase CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Install CGO Dependencies (DuckDB requirement)
+        run: sudo apt-get update && sudo apt-get install -y build-essential gcc
+
+      - name: Go Mod Tidy Check
+        run: go mod tidy && git diff --exit-code
+
+      - name: Run Tests with Race Detector
+        # CGO_ENABLED=1 is required for go-duckdb compilation
+        run: CGO_ENABLED=1 go test -v -race ./...
+
+      - name: Build Binary (Dry Run)
+        run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
