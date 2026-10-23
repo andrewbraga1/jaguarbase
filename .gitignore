@@ -1,1 +1,8 @@
 .env
+# Database files
+*.duckdb
+*.wal
+
+# Binaries
+jaguarbase
+jgate

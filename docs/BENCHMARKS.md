@@ -29,5 +29,29 @@ The `[gRPC] Vector Search` scenario forces the engine to calculate cosine simila
 ### 3. MCP and JSON Serialization Overhead (831 req/s)
 The Model Context Protocol (MCP) relies on HTTP/1.1 and JSON-RPC 2.0. As expected in computer science, parsing text-based JSON (marshaling/unmarshaling strings and arrays) consumes more CPU cycles than gRPC's binary Protobuf. However, the standard `net/http` Go router proved incredibly resilient, handling 1,000 concurrent AI Agent connections without a single `Connection Refused` or timeout, stabilizing at a highly respectable **831 req/s**.
 
+## Competitive Landscape: Why JaguarBase?
+
+How does **~1,000 req/s (gRPC)** and **~831 req/s (HTTP)** on a standard dual-core laptop compare to industry standards? We cross-reference our local tests with industry architectural baselines:
+
+### 1. vs. Python-based Vector DBs (e.g., ChromaDB)
+* **The Architecture:** Relies on Python (FastAPI/Uvicorn) wrapping C++ libraries. 
+* **The Bottleneck:** Python's Global Interpreter Lock (GIL) and HTTP parsing overhead.
+* **Comparison:** While the underlying C++ math is fast, the Python HTTP layer caps throughput on constrained hardware. JaguarBase utilizes Go's native HTTP multiplexer, bypassing the GIL entirely.
+* **Validation Source:** [TechEmpower Web Framework Benchmarks](https://www.techempower.com/benchmarks/) historically demonstrates Go's `net/http` outperforming Python's FastAPI by multiples of 3x to 5x in JSON serialization and routing throughput.
+
+### 2. vs. pgvector (PostgreSQL)
+* **The Architecture:** A C extension running inside PostgreSQL.
+* **The Bottleneck:** TCP Network hops and Postgres connection pooling (PgBouncer) overhead.
+* **Comparison:** Querying `pgvector` requires network I/O and connection instantiation. JaguarBase embeds DuckDB **in-process**, eliminating the database network hop entirely and allowing direct memory access for the Go runtime.
+* **Validation Source:** Supabase's [pgvector Performance Benchmark](https://supabase.com/blog/pgvector-performance) details the impact of connection scaling and network I/O on vector retrieval throughput, highlighting the overhead that in-process databases (like DuckDB) avoid.
+
+### 3. vs. Heavyweight Clusters (Qdrant / Milvus)
+* **The Architecture:** Distributed, scalable engines built for billion-scale vectors using HNSW indexing.
+* **The Bottleneck:** Memory footprint (RAM).
+* **Comparison:** Distributed systems require gigabytes of RAM just to idle and maintain cluster consensus. JaguarBase is built for the **Agentic Scale** (thousands to millions of context vectors), delivering comparable retrieval speeds in a single lightweight Go binary without the massive RAM overhead.
+* **Validation Source:** Official sizing guides, such as the [Milvus Prerequisite Calculator](https://milvus.io/tools/sizing), which recommends 8GB+ of RAM for basic production deployments, whereas JaguarBase idles in megabytes.
+
+> **Methodology Note:** To reproduce these comparisons manually, benchmark a raw FastAPI endpoint returning a 1536-dim JSON vector against a Go `net/http` endpoint on the same hardware. The delta represents the architectural overhead that JaguarBase reclaims.
+
 ## Conclusion
-JaguarBase proves that an architecture built in **pure Go + DuckDB** can deliver enterprise-grade performance for AI Agents locally, consuming a fraction of the resources required by traditional microservices.
+JaguarBase proves that an architecture built in **Go (SIMD-accelerated via DuckDB)** can deliver enterprise-grade performance for AI Agents locally, consuming a fraction of the resources required by traditional microservices.
