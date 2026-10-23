@@ -219,23 +219,31 @@ func (e *DuckDBEngine) AutoMigrate(ctx context.Context, manifest *config.Manifes
 	// Iterate over all data sources declared in jaguardb.example.yaml
 	for _, src := range manifest.Sources {
 
-		// Dynamically build the query based on the table name from the manifest
-		// Note: In the future, "FLOAT[3]" can also come from a src.Dimension variable!
+		// 1. Dynamically read the vector dimension from the manifest
+		embeddingType := "FLOAT[3]" // Default fallback
+		for _, col := range src.Schema {
+			if col.Column == "embedding" {
+				embeddingType = strings.ToUpper(col.Type)
+				break
+			}
+		}
+
+		// 2. Dynamically build the query using the extracted embedding type
 		query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id VARCHAR,
 			content VARCHAR,
 			metadata JSON,
-			embedding FLOAT[3],
+			embedding %s,
 			_is_tainted BOOLEAN
-		);`, src.Table)
+		);`, src.Table, embeddingType)
 
 		// Replace 'e.db' with your actual sql.DB connection variable inside DuckDBEngine
 		if _, err := e.db.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("failed to create or verify table %s: %w", src.Table, err)
 		}
 
-		log.Printf("🛠️ AutoMigrate: Vector table '%s' successfully synchronized in DuckDB.", src.Table)
+		log.Printf("🛠️ AutoMigrate: Vector table '%s' successfully synchronized in DuckDB (Vector Type: %s).", src.Table, embeddingType)
 	}
 
 	return nil

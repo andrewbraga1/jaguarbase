@@ -17,10 +17,11 @@ type ColumnDef struct {
 
 // SourceDef represents a data source (e.g., a PostgreSQL table).
 type SourceDef struct {
-	Name   string      `yaml:"name"`
-	Type   string      `yaml:"type"`
-	Table  string      `yaml:"table"`
-	Schema []ColumnDef `yaml:"schema"`
+	Name     string      `yaml:"name"`
+	Type     string      `yaml:"type"`
+	Table    string      `yaml:"table"`
+	LLMModel string      `yaml:"llm_model,omitempty"`
+	Schema   []ColumnDef `yaml:"schema"`
 }
 
 // Manifest represents the entire jaguardb.yaml configuration.

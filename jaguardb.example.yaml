@@ -3,6 +3,7 @@ sources:
   - name: "secretario_postgres"
     type: "postgres"
     table: "support_tickets"
+    llm_model: qwen2.5-coder:1.5b
     schema:
       - column: "id"
         type: "integer"
@@ -16,3 +17,6 @@ sources:
       - column: "message"
         type: "string"
         governance: "untrusted_input"
+      - column: "embedding"      
+        type: "FLOAT[1536]"       
+        governance: "none"
