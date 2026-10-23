@@ -62,7 +62,8 @@ func main() {
 	if err := db.InsertBatch(setupCtx, TableName, schema, rows); err != nil {
 		log.Fatalf("❌ Failed to populate data: %v", err)
 	}
-	fmt.Println("✅ Data populated successfully.\n")
+	fmt.Println("✅ Data populated successfully.")
+	fmt.Println()
 
 	// ==========================================
 	// METRICS PHASE 1: THE BASELINE
