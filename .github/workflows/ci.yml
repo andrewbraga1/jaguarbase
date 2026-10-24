@@ -27,7 +27,6 @@ jobs:
         run: go mod tidy && git diff --exit-code
 
       - name: Run Tests with Race Detector
-        # CGO_ENABLED=1 is required for go-duckdb compilation
         run: CGO_ENABLED=1 go test -v -race ./...
 
       - name: Chaos Test 02 (Context Cancellation / Phantom Agent)
@@ -39,7 +38,8 @@ jobs:
       - name: Chaos Test 03 (Load Shedding / Runaway Loop)
         run: |
           # 1. Start the pre-compiled binary in the background (Starts instantly)
-          ./jaguarbase &
+          # We inject a dummy HMAC secret so the Zero-Trust engine boots up
+          JAGUARBASE_HMAC_SECRET="ci_dummy_secret_key_123" ./jaguarbase &
           SERVER_PID=$!
           
           # 2. Give it 2 seconds to bind the HTTP port
