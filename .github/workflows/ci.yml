@@ -18,7 +18,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-          cache: true
+          cache: false
 
       - name: Install CGO Dependencies (DuckDB requirement)
         run: sudo apt-get update && sudo apt-get install -y build-essential gcc
@@ -33,22 +33,20 @@ jobs:
       - name: Chaos Test 02 (Context Cancellation / Phantom Agent)
         run: CGO_ENABLED=1 go run cmd/chaos/phantom_agent/main.go
       
-      - name: Build Binary (Dry Run)
+      - name: Build Binary
         run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
       
       - name: Chaos Test 03 (Load Shedding / Runaway Loop)
         run: |
-          # 1. Start the JaguarBase server in the background
-          CGO_ENABLED=1 go run cmd/jaguarbase/main.go &
+          # 1. Start the pre-compiled binary in the background (Starts instantly)
+          ./jaguarbase &
           SERVER_PID=$!
           
-          # 2. Give the server 3 seconds to initialize DuckDB and HTTP routes
-          sleep 3
+          # 2. Give it 2 seconds to bind the HTTP port
+          sleep 2
           
           # 3. Fire the Chaos script
           go run cmd/chaos/runaway_loop/main.go
           
           # 4. Gracefully kill the server after the test
           kill $SERVER_PID
-
-      
