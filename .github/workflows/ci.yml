@@ -32,7 +32,10 @@ jobs:
 
       - name: Chaos Test 02 (Context Cancellation / Phantom Agent)
         run: CGO_ENABLED=1 go run cmd/chaos/phantom_agent/main.go
-
+      
+      - name: Build Binary (Dry Run)
+        run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
+      
       - name: Chaos Test 03 (Load Shedding / Runaway Loop)
         run: |
           # 1. Start the JaguarBase server in the background
@@ -48,5 +51,4 @@ jobs:
           # 4. Gracefully kill the server after the test
           kill $SERVER_PID
 
-      - name: Build Binary (Dry Run)
-        run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
+      
