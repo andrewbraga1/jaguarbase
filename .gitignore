@@ -1,8 +1,26 @@
-.env
-# Database files
+# Git
+.git
+.gitignore
+
+# Go
+vendor/
+**/*.test
+**/*.out
+
+# IDEs
+.idea/
+.vscode/
+
+# JaguarBase Local Data
 *.duckdb
+*.duckdb.wal
 *.wal
+data/
+jaguardb.yaml
 
 # Binaries
 jaguarbase
 jgate
+
+# Extras
+.env

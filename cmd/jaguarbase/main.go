@@ -29,9 +29,13 @@ func main() {
 	_ = godotenv.Load()
 
 	// 1. Load Configuration (Manifest)
-	manifest, err := config.LoadManifest("jaguardb.example.yaml")
+	configPath := os.Getenv("JAGUARBASE_CONFIG_PATH")
+	if configPath == "" {
+		configPath = "jaguardb.yaml"
+	}
+	manifest, err := config.LoadManifest(configPath)
 	if err != nil {
-		log.Fatalf("Failed to load manifest: %v", err)
+		log.Fatalf("Failed to load manifest from %s: %v", configPath, err)
 	}
 
 	// Context for graceful shutdown propagation to workers (like the Ingestion Pipeline)

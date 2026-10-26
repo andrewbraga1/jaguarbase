@@ -37,16 +37,15 @@ jobs:
       
       - name: Chaos Test 03 (Load Shedding / Runaway Loop)
         run: |
-          # 1. Start the pre-compiled binary in the background (Starts instantly)
           # We inject a dummy HMAC secret so the Zero-Trust engine boots up
           JAGUARBASE_HMAC_SECRET="ci_dummy_secret_key_123" ./jaguarbase &
           SERVER_PID=$!
           
-          # 2. Give it 2 seconds to bind the HTTP port
           sleep 2
           
-          # 3. Fire the Chaos script
           go run cmd/chaos/runaway_loop/main.go
           
-          # 4. Gracefully kill the server after the test
           kill $SERVER_PID
+
+      - name: Build Docker Image (Edge AI Container)
+        run: docker build -t andrewbraga1/jaguarbase:latest .

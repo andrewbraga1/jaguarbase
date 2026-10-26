@@ -223,7 +223,7 @@ func (e *DuckDBEngine) scanDynamicRows(dbRows *sql.Rows) ([]map[string]any, erro
 
 // AutoMigrate ensures that all tables mapped in the Manifest exist in DuckDB before receiving data.
 func (e *DuckDBEngine) AutoMigrate(ctx context.Context, manifest *config.Manifest) error {
-	// Iterate over all data sources declared in jaguardb.example.yaml
+	// Iterate over all data sources declared in jaguardb.yaml
 	for _, src := range manifest.Sources {
 
 		// 1. Dynamically read the vector dimension from the manifest
