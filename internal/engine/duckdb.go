@@ -58,8 +58,6 @@ func (e *DuckDBEngine) InitSchema(ctx context.Context, tableName string, schema 
 		colsBuilder.WriteString(", ")
 	}
 
-	colsBuilder.WriteString("_is_tainted BOOLEAN")
-
 	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s);", tableName, colsBuilder.String())
 
 	if _, err := e.db.ExecContext(ctx, query); err != nil {
@@ -76,13 +74,12 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	// 1. Build columns and placeholders 100% dynamically based ONLY on the provided schema
 	var cols []string
 	var placeholders []string
+
 	for _, col := range schema {
 		cols = append(cols, col.Column)
 		placeholders = append(placeholders, "?")
 	}
 
-	cols = append(cols, "_is_tainted")
-	placeholders = append(placeholders, "?")
 	// strings.Join automatically handles trailing commas
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
@@ -103,8 +100,9 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	defer stmt.Close()
 
 	for _, rowMap := range rows {
-		// The argument array size now matches the schema length exactly
+		// Allocate space for schema length
 		args := make([]any, 0, len(schema))
+
 		for _, col := range schema {
 			val := rowMap[col.Column]
 
@@ -126,11 +124,6 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 			args = append(args, val)
 		}
 
-		taintedVal, exists := rowMap["_is_tainted"]
-		if !exists {
-			taintedVal = false // Fallback: se não existir no map, assume limpo
-		}
-		args = append(args, taintedVal)
 		if _, err := stmt.ExecContext(ctx, args...); err != nil {
 			return fmt.Errorf("failed to execute dynamic insert: %w", err)
 		}
@@ -145,7 +138,6 @@ func (e *DuckDBEngine) QueryVector(ctx context.Context, tableName string, schema
 		colsBuilder.WriteString(col.Column)
 		colsBuilder.WriteString(", ")
 	}
-	colsBuilder.WriteString("_is_tainted")
 
 	// Convert queryVector to string for safe cross-boundary CGO parameter passing
 	vectorBytes, _ := json.Marshal(queryVector)
@@ -170,8 +162,6 @@ func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, sche
 		colsBuilder.WriteString(col.Column)
 		colsBuilder.WriteString(", ")
 	}
-	colsBuilder.WriteString("_is_tainted")
-
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE _is_tainted = false", colsBuilder.String(), tableName)
 
 	dbRows, err := e.db.QueryContext(ctx, query)
@@ -300,4 +290,21 @@ func (e *DuckDBEngine) SemanticSearch(ctx context.Context, tableName string, que
 	}
 
 	return results, nil
+}
+
+// GetMaxID retrieves the highest numeric ID currently stored in the table.
+// This is critical for resuming the Historical Backfill (Initial Sync) without duplicating vectors.
+func (d *DuckDBEngine) GetMaxID(ctx context.Context, tableName string, pkColumn string) int {
+	// Query to find the maximum ID. We cast to BIGINT safely.
+	query := fmt.Sprintf("SELECT MAX(CAST(%s AS BIGINT)) FROM %s", pkColumn, tableName)
+
+	var maxID sql.NullInt64
+	err := d.db.QueryRowContext(ctx, query).Scan(&maxID)
+
+	// If the table is empty or an error occurs (e.g., table doesn't exist yet), return 0
+	if err != nil || !maxID.Valid {
+		return 0
+	}
+
+	return int(maxID.Int64)
 }

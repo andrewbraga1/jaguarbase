@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -143,4 +144,63 @@ func (p *PostgresAdapter) Close() error {
 		return p.listener.Close()
 	}
 	return nil
+}
+
+// FetchBatch performs a dynamic fetch for historical records (Backfill).
+// It queries the database using agnostic mapping and returns a slice of generic maps,
+// completely decoupling the Ingestion pipeline from the physical schema.
+func (p *PostgresAdapter) FetchBatch(ctx context.Context, tableName string, columns []string, pkColumn string, lastID int, limit int) ([]map[string]any, error) {
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("no columns provided for dynamic fetch")
+	}
+
+	// Build the SELECT query dynamically for historical syncing
+	query := fmt.Sprintf(
+		"SELECT %s FROM %s WHERE %s > $1 ORDER BY %s ASC LIMIT $2",
+		strings.Join(columns, ", "),
+		tableName,
+		pkColumn,
+		pkColumn,
+	)
+
+	// Note: Assuming 'p.db' is the *sql.DB instance in your ingestion PostgresAdapter
+	rows, err := p.db.QueryContext(ctx, query, lastID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch historical records from table '%s': %w", tableName, err)
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		// Allocate slice of empty interfaces and their pointers to scan unknown columns
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
+		for i := range columns {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		// Map column names back to their scanned values
+		rowMap := make(map[string]any, len(columns))
+		for i, col := range columns {
+			val := values[i]
+			// Ensure bytes are converted to strings if returned as such by the driver
+			if b, ok := val.([]byte); ok {
+				rowMap[col] = string(b)
+			} else {
+				rowMap[col] = val
+			}
+		}
+
+		results = append(results, rowMap)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during row iteration: %w", err)
+	}
+
+	return results, nil
 }

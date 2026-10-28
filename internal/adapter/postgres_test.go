@@ -31,31 +31,39 @@ func TestPostgresAdapter_Integration(t *testing.T) {
 		t.Logf("[PASS] Connection pool established successfully.")
 	})
 
-	t.Run("Fetches new tickets correctly", func(t *testing.T) {
+	t.Run("Fetches new records dynamically", func(t *testing.T) {
 		pgAdapter, err := adapter.NewPostgresAdapter(ctx, dbURL)
 		if err != nil {
 			t.Fatalf("Failed to initialize PostgresAdapter: %v", err)
 		}
 		defer pgAdapter.Close()
 
+		// Agnostic parameters driven by the YAML manifestation logic
+		tableName := "support_tickets"
+		columns := []string{"id", "customer_cpf", "message"}
+		pkColumn := "id"
+
 		// Fetch rows starting from ID 0, with a limit of 10
-		tickets, err := pgAdapter.FetchNew(ctx, 0, 10)
+		records, err := pgAdapter.FetchNew(ctx, tableName, columns, pkColumn, 0, 10)
 		if err != nil {
 			t.Fatalf("FetchNew failed: %v", err)
 		}
 
-		if len(tickets) == 0 {
-			t.Logf("[WARN] No tickets found. Make sure the 'support_tickets' table is seeded.")
+		if len(records) == 0 {
+			t.Logf("[WARN] No records found. Make sure the '%s' table is seeded.", tableName)
 		} else {
-			t.Logf("[PASS] Fetched %d tickets successfully.", len(tickets))
+			t.Logf("[PASS] Fetched %d records successfully.", len(records))
 
-			// Validate struct mapping
-			for _, ticket := range tickets {
-				if ticket.ID <= 0 {
-					t.Errorf("Expected ticket ID to be strictly positive, got %d", ticket.ID)
+			// Validate dynamic map mapping instead of hardcoded struct
+			for _, record := range records {
+				idVal, hasID := record["id"]
+				if !hasID || idVal == nil {
+					t.Errorf("Expected record to contain an 'id' key")
 				}
-				if ticket.Message == "" {
-					t.Errorf("Expected ticket message to not be empty for ID %d", ticket.ID)
+
+				msgVal, hasMsg := record["message"]
+				if !hasMsg || msgVal == "" {
+					t.Errorf("Expected record to contain a non-empty 'message' for ID %v", idVal)
 				}
 			}
 		}

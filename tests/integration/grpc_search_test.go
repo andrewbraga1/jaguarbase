@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -68,11 +69,23 @@ func TestGRPCSemanticSearch(t *testing.T) {
 		t.Errorf("⚠️ Handoff Proof (HMAC) is empty. Zero-Trust security validation failed.")
 	}
 	if len(res.SafePayload) == 0 {
-		t.Errorf("⚠️ JSON Payload is empty.")
+		t.Fatalf("⚠️ JSON Payload is empty.")
+	}
+
+	// Contract Validation: Ensure the payload is a valid array of maps
+	var payload []map[string]any
+	if err := json.Unmarshal(res.SafePayload, &payload); err != nil {
+		t.Fatalf("❌ Failed to unmarshal JSON payload: %v\nPayload: %s", err, string(res.SafePayload))
 	}
 
 	t.Logf("🎉 Search completed in %v", time.Since(startTime))
 	t.Logf("📊 Rows found: %d", res.TotalRows)
 	t.Logf("🛡️ HMAC Proof: %s", res.HandoffProof)
-	t.Logf("📦 JSON Payload: %s", string(res.SafePayload))
+	t.Logf("📦 JSON Payload Parsed: %d records safely retrieved.", len(payload))
+
+	// Print the masked data to visually verify Zero-Trust
+	if len(payload) > 0 {
+		prettyJSON, _ := json.MarshalIndent(payload[0], "", "  ")
+		t.Logf("🔍 First Record Snapshot:\n%s", string(prettyJSON))
+	}
 }

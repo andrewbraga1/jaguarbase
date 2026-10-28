@@ -38,38 +38,46 @@ func TestGovernancePipeline_Integration(t *testing.T) {
 
 	scanner := governance.NewScanner()
 
-	// 2. Fetch real data from Postgres
-	tickets, err := pg.FetchNew(ctx, 0, 10)
+	// 2. Fetch real data from Postgres dynamically
+	tableName := "support_tickets"
+	columns := []string{"id", "customer_cpf", "message"}
+	pkColumn := "id"
+
+	records, err := pg.FetchNew(ctx, tableName, columns, pkColumn, 0, 10)
 	if err != nil {
-		t.Fatalf("Failed to fetch tickets: %v", err)
+		t.Fatalf("Failed to fetch records: %v", err)
 	}
 
-	if len(tickets) == 0 {
-		t.Skip("No tickets found in database to test governance pipeline.")
+	if len(records) == 0 {
+		t.Skip("No records found in database to test governance pipeline.")
 	}
 
-	// 3. Process each ticket through the Governance Pipeline
+	// 3. Process each record through the Governance Pipeline
 	t.Run("Apply Zero-Trust Pipeline", func(t *testing.T) {
-		for _, ticket := range tickets {
+		for _, record := range records {
+			idVal := record["id"]
 
-			// Apply Taint Check
-			ticket.IsTainted = scanner.CheckTaint(ticket.Message)
+			// Apply Taint Check dynamically
+			if msgVal, ok := record["message"].(string); ok {
+				isTainted := scanner.CheckTaint(msgVal)
+				record["_is_tainted"] = isTainted
+			}
 
-			// Apply Vault Tokenization
-			if ticket.CustomerCPF != "" {
-				token, err := vault.Tokenize(ctx, ticket.CustomerCPF)
+			// Apply Vault Tokenization dynamically
+			if cpfVal, ok := record["customer_cpf"].(string); ok && cpfVal != "" {
+				token, err := vault.Tokenize(ctx, cpfVal)
 				if err != nil {
-					t.Fatalf("Vault failed for ticket %d: %v", ticket.ID, err)
+					t.Fatalf("Vault failed for record %v: %v", idVal, err)
 				}
 
 				if !strings.HasPrefix(token, "vault_cpf_") {
 					t.Errorf("Expected masked token, got %s", token)
 				}
-				ticket.CustomerCPF = token // Mutate struct with safe token
+				record["customer_cpf"] = token // Mutate map with safe token
 			}
 
 			// Validate and log output
-			t.Logf("[PASS] Processed Ticket %d | Tainted: %v | Safe CPF: %s", ticket.ID, ticket.IsTainted, ticket.CustomerCPF)
+			t.Logf("[PASS] Processed Record %v | Tainted: %v | Safe CPF: %v", idVal, record["_is_tainted"], record["customer_cpf"])
 		}
 	})
 }

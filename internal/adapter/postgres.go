@@ -3,84 +3,100 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Ticket reflete a nossa entidade de domínio central.
-type Ticket struct {
-	ID          int    `json:"id"`
-	CustomerCPF string `json:"customer_cpf,omitempty"`
-	Message     string `json:"message"`
-	IsTainted   bool   `json:"is_tainted"`
-}
-
-// PostgresAdapter gerencia a conexão física com o banco legado.
+// PostgresAdapter manages the physical connection to the source database.
 type PostgresAdapter struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresAdapter inicializa o pool de conexões de alta performance.
+// NewPostgresAdapter initializes a high-performance connection pool.
 func NewPostgresAdapter(ctx context.Context, connString string) (*PostgresAdapter, error) {
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao parsear DSN: %w", err)
+		return nil, fmt.Errorf("failed to parse DSN: %w", err)
 	}
 
-	// Otimizações para tráfego intenso (ideal para ingestão rápida)
+	// Optimizations for heavy traffic (ideal for fast data ingestion)
 	config.MaxConns = 10
 	config.MinConns = 2
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao conectar no postgres: %w", err)
+		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 	}
 
-	// Testa a conexão (ping)
+	// Test the connection (ping)
 	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("postgres inalcançável: %w", err)
+		return nil, fmt.Errorf("postgres unreachable: %w", err)
 	}
 
 	return &PostgresAdapter{pool: pool}, nil
 }
 
-// Close encerra as conexões graciosamente no shutdown.
+// Close gracefully terminates the connection pool during shutdown.
 func (p *PostgresAdapter) Close() {
 	if p.pool != nil {
 		p.pool.Close()
 	}
 }
 
-// FetchNew simula a etapa do CDC: busca registros novos na tabela do Secretário IA.
-func (p *PostgresAdapter) FetchNew(ctx context.Context, lastID int, limit int) ([]Ticket, error) {
-	// Substitua 'support_tickets' pelo nome real da tabela no seu banco
-	query := `
-		SELECT id, customer_cpf, message 
-		FROM support_tickets 
-		WHERE id > $1 
-		ORDER BY id ASC 
-		LIMIT $2
-	`
+// FetchNew performs a dynamic CDC fetch for new records in the agnostic table.
+// It returns a slice of generic maps, completely decoupling the Go code from the database schema.
+func (p *PostgresAdapter) FetchNew(ctx context.Context, tableName string, columns []string, pkColumn string, lastID int, limit int) ([]map[string]any, error) {
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("no columns provided for dynamic fetch")
+	}
+
+	// Build the SELECT query dynamically
+	query := fmt.Sprintf(
+		"SELECT %s FROM %s WHERE %s > $1 ORDER BY %s ASC LIMIT $2",
+		strings.Join(columns, ", "),
+		tableName,
+		pkColumn,
+		pkColumn,
+	)
 
 	rows, err := p.pool.Query(ctx, query, lastID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao buscar tickets: %w", err)
+		return nil, fmt.Errorf("failed to fetch records from table '%s': %w", tableName, err)
 	}
 	defer rows.Close()
 
-	var tickets []Ticket
+	var results []map[string]any
 	for rows.Next() {
-		var t Ticket
-		// Note que IsTainted não vem do Postgres, pois é gerado no JaguarBase!
-		if err := rows.Scan(&t.ID, &t.CustomerCPF, &t.Message); err != nil {
-			return nil, fmt.Errorf("erro ao ler linha: %w", err)
+		// Allocate slice of empty interfaces and their pointers to scan unknown columns
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
+		for i := range columns {
+			valuePtrs[i] = &values[i]
 		}
-		tickets = append(tickets, t)
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		// Map column names back to their scanned values
+		rowMap := make(map[string]any, len(columns))
+		for i, col := range columns {
+			val := values[i]
+			// Ensure bytes are converted to strings if returned as such by pgx
+			if b, ok := val.([]byte); ok {
+				rowMap[col] = string(b)
+			} else {
+				rowMap[col] = val
+			}
+		}
+
+		results = append(results, rowMap)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("erro durante iteração: %w", err)
+		return nil, fmt.Errorf("error during row iteration: %w", err)
 	}
 
-	return tickets, nil
+	return results, nil
 }

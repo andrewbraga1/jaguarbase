@@ -5,20 +5,28 @@ sources:
   - name: "secretario_postgres"
     type: "postgres"
     table: "support_tickets"
-    llm_model: qwen2.5-coder:1.5b
+    content_column: "message"
+    llm_model: "qwen2.5-coder:1.5b"
     schema:
       - column: "id"
         type: "integer"
         governance: "none"
+        primary_key: true
       - column: "customer_cpf"
         type: "string"
         governance: "pii_vault"
       - column: "metadata"
         type: "json"
-        governance: "untrusted_input"
+        governance: "none"
+        virtual: true
       - column: "message"
         type: "string"
         governance: "untrusted_input"
       - column: "embedding"      
         type: "FLOAT[1536]"       
         governance: "none"
+        virtual: true
+      - column: "_is_tainted"
+        type: "boolean"
+        governance: "none"
+        virtual: true
