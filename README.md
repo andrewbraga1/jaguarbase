@@ -23,7 +23,7 @@ Traditional architectures force AI Agents to perform computationally heavy vecto
 
 ## 🚀 Key Features
 
-- **Agnostic Architecture:** Configured via `jaguardb.yaml`. You define the schema, JaguarBase adapts dynamically. No hardcoded structs or columns.
+- **100% Manifest-Driven Architecture:** Configured strictly via `jaguardb.yaml`. You define the schema, JaguarBase adapts dynamically. No hardcoded structs. It uses `virtual: true` definitions to seamlessly decouple raw transactional columns from the enriched RAG vector schema.
 - **In-Process Vector Storage:** Powered by DuckDB + VSS. No external database networks. Extremely fast C++ SIMD vector math inside a Go wrapper.
 - **Zero-Trust Governance:** Built-in PII masking and HMAC Handoff Proofs. Corrupted or malicious prompts are flagged (`_is_tainted`) and mathematically isolated from AI searches before they hit the context window.
 - **Dual-Plane Protocol:**
@@ -52,15 +52,26 @@ Tested on a Dual-Core Intel i7 with 1,000 simultaneous concurrent workers proces
 
 ## 🛠️ Quick Start
 
+You can run JaguarBase entirely via Docker, injecting your YAML configuration at runtime:
+
 ```bash
-# 1. Install CGO Dependencies (Required for DuckDB C++ bindings)
+# 1. Start JaguarBase in Docker
+docker run -d \
+  --name jaguarbase-edge \
+  --network="host" \
+  --env-file .env \
+  -v "$(pwd)/jaguardb.yaml:/app/jaguardb.yaml" \
+  -v "$(pwd)/data:/app/data" \
+  andrewbraga1/jaguarbase:latest
+
+# 2. View live ingestion logs
+docker logs -f jaguarbase-edge
+```
+
+*For local development (Requires CGO):*
+```bash
 sudo apt-get install build-essential gcc
-
-# 2. Run the JaguarBase Server
 CGO_ENABLED=1 go run cmd/jaguarbase/main.go
-
-# 3. In another terminal, run the High-Concurrency Stress Test
-go run cmd/stress/main.go
 ```
 
 ## 🛣️ Roadmap
@@ -70,4 +81,4 @@ go run cmd/stress/main.go
 - [x] **Phase 3: Vector Search (RAG)** - DuckDB VSS extensions, dynamic embeddings, and fail-closed Semantic Similarity.
 - [x] **Phase 4: Multi-Protocol Edge** - High-performance Edge layer (gRPC) and MCP Server (for AI Agents).
 - [x] **Phase 5: Chaos Engineering & Resilience** - O(1) Load Shedding, Context Cancellation, and hardware-level limits (Disk/RAM).
-- [ ] **Phase 6: Containerization & CI/CD** - Multi-stage Dockerfile (Debian Slim + CGO) and deployment automation.
+- [x] **Phase 6: Containerization & CI/CD** - Multi-stage Dockerfile (Debian Slim + CGO) and deployment automation.

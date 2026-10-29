@@ -2,9 +2,9 @@ version: "1.0"
 security:
   mcp_in_flight_limit: 50
 sources:
-  - name: "secretario_postgres"
+  - name: "your_postgres_name"
     type: "postgres"
-    table: "support_tickets"
+    table: "your_table"
     content_column: "message"
     llm_model: "qwen2.5-coder:1.5b"
     schema:
@@ -12,7 +12,7 @@ sources:
         type: "integer"
         governance: "none"
         primary_key: true
-      - column: "customer_cpf"
+      - column: "column_name_1"
         type: "string"
         governance: "pii_vault"
       - column: "metadata"
