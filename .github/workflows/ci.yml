@@ -37,6 +37,19 @@ jobs:
       
       - name: Chaos Test 03 (Load Shedding / Runaway Loop)
         run: |
+          # Create a dummy jaguardb.yaml so the main server can boot up in CI
+          cat <<EOF > jaguardb.yaml
+          version: "1.0"
+          security:
+            mcp_in_flight_limit: 100
+          sources:
+            - table: "chaos_target"
+              schema:
+                - column: "id"
+                  type: "string"
+                  governance: "none"
+          EOF
+
           # We inject a dummy HMAC secret so the Zero-Trust engine boots up
           JAGUARBASE_HMAC_SECRET="ci_dummy_secret_key_123" ./jaguarbase &
           SERVER_PID=$!
