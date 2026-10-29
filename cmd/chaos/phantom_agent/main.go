@@ -37,6 +37,7 @@ func main() {
 		{Column: "id", Type: "string"},
 		{Column: "content", Type: "string"},
 		{Column: "metadata", Type: "string"},
+		{Column: "_is_tainted", Type: "BOOLEAN"},
 		{Column: "embedding", Type: "vector", Dimensions: 1536},
 	}
 	if err := db.InitSchema(setupCtx, TableName, schema); err != nil {
