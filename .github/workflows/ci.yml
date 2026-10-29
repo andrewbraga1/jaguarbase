@@ -10,6 +10,33 @@ jobs:
   test:
     name: Build & Test
     runs-on: ubuntu-latest
+    
+    # 🚀 Injeta a infraestrutura completa (Redis + Postgres) para o Edge Appliance
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -27,6 +54,10 @@ jobs:
         run: go mod tidy && git diff --exit-code
 
       - name: Run Tests with Race Detector
+        env:
+          JAGUARBASE_HMAC_SECRET: "ci_dummy_secret_key_123"
+          TEST_REDIS_URL: "redis://localhost:6379"
+          TEST_DATABASE_URL: "postgres://ci_user:ci_password@localhost:5432/ci_db?sslmode=disable"
         run: CGO_ENABLED=1 go test -v -race ./...
 
       - name: Chaos Test 02 (Context Cancellation / Phantom Agent)
@@ -36,6 +67,10 @@ jobs:
         run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
       
       - name: Chaos Test 03 (Load Shedding / Runaway Loop)
+        env:
+          JAGUARBASE_HMAC_SECRET: "ci_dummy_secret_key_123"
+          REDIS_URL: "redis://localhost:6379"
+          DATABASE_URL: "postgres://ci_user:ci_password@localhost:5432/ci_db?sslmode=disable"
         run: |
           # Create a dummy jaguardb.yaml so the main server can boot up in CI
           cat <<EOF > jaguardb.yaml
@@ -50,8 +85,8 @@ jobs:
                   governance: "none"
           EOF
 
-          # We inject a dummy HMAC secret so the Zero-Trust engine boots up
-          JAGUARBASE_HMAC_SECRET="ci_dummy_secret_key_123" ./jaguarbase &
+          # Start JaguarBase with full backend injected
+          ./jaguarbase &
           SERVER_PID=$!
           
           sleep 2
