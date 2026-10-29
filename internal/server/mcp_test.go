@@ -28,7 +28,8 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 	schema := []config.ColumnDef{
 		{Column: "id", Type: "string"},
 		{Column: "content", Type: "string"},
-		{Column: "metadata", Type: "string"}, // DuckDB aceita o JSON como string na inserção
+		{Column: "metadata", Type: "string"},
+		{Column: "_is_tainted", Type: "boolean"},
 		{Column: "embedding", Type: "vector", Dimensions: 3},
 	}
 	tableName := "agent_knowledge"

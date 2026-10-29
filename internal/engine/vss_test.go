@@ -25,6 +25,7 @@ func TestDuckDB_VectorSearch(t *testing.T) {
 		schema := []config.ColumnDef{
 			{Column: "id", Type: "integer"},
 			{Column: "content", Type: "string"},
+			{Column: "_is_tainted", Type: "BOOLEAN"},
 			{Column: "embedding", Type: "vector", Dimensions: 3},
 		}
 

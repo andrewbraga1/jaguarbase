@@ -26,6 +26,7 @@ func TestDuckDBEngine_DynamicIntegration(t *testing.T) {
 			{Column: "id", Type: "integer"},
 			{Column: "cpf", Type: "string"},
 			{Column: "message", Type: "string"},
+			{Column: "_is_tainted", Type: "BOOLEAN"},
 		}
 
 		if err := dbEngine.InitSchema(ctx, tableName, schema); err != nil {

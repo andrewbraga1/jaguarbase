@@ -27,6 +27,7 @@ func TestGRPCEngineServer_Integration(t *testing.T) {
 		{Column: "id", Type: "integer"},
 		{Column: "content", Type: "string"},
 		{Column: "metadata", Type: "string"},
+		{Column: "_is_tainted", Type: "boolean"},
 		{Column: "embedding", Type: "vector", Dimensions: 3},
 	}
 	tableName := "test_knowledge"
