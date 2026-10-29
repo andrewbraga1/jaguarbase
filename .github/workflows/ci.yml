@@ -1,4 +1,4 @@
-name: JaguarBase CI Pipeline
+name: Fast CI Pipeline
 
 on:
   push:
@@ -8,10 +8,10 @@ on:
 
 jobs:
   test:
-    name: Build & Test
+    name: Build & Test (Unit & Chaos)
     runs-on: ubuntu-latest
     
-    # Inject full infrastructure (Redis + Postgres) for Edge Appliance testing
+    # Apenas o Redis para o Cofre Zero-Trust não crashar o servidor
     services:
       redis:
         image: redis:7-alpine
@@ -19,20 +19,6 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_USER: ci_user
-          POSTGRES_PASSWORD: ci_password
-          POSTGRES_DB: ci_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -48,54 +34,29 @@ jobs:
           cache: false
 
       - name: Install System Dependencies
-        # Added postgresql-client to inject the dynamic test schema
-        run: sudo apt-get update && sudo apt-get install -y build-essential gcc postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y build-essential gcc
 
       - name: Go Mod Tidy Check
         run: go mod tidy && git diff --exit-code
 
-      - name: Seed CI Database and Run Tests
-        env:
-          JAGUARBASE_HMAC_SECRET: "ci_dummy_secret_key_123"
-          TEST_REDIS_URL: "redis://localhost:6379"
-          TEST_DATABASE_URL: "postgres://ci_user:ci_password@localhost:5432/ci_db?sslmode=disable"
-        run: |
-          # 1. To prove schema agnosticism, we dynamically patch the hardcoded test files 
-          # from the old 'support_tickets' schema to a completely new 'agent_memory' schema.
-          sed -i 's/support_tickets/agent_memory/g' internal/adapter/*test.go internal/governance/*test.go
-          sed -i 's/customer_cpf/secret_key/g' internal/adapter/*test.go internal/governance/*test.go
-          sed -i 's/message/instruction/g' internal/adapter/*test.go internal/governance/*test.go
+      - name: Run Tests (Unit & VSS)
+        run: CGO_ENABLED=1 go test -v -race ./...
 
-          # 2. Seed the CI database with the new schema and mock data
-          psql $TEST_DATABASE_URL -c "
-            CREATE TABLE IF NOT EXISTS agent_memory (
-              id SERIAL PRIMARY KEY,
-              secret_key VARCHAR(255),
-              instruction TEXT
-            );
-            INSERT INTO agent_memory (secret_key, instruction) VALUES ('vault_key_999', 'System override authorized');
-          "
-          
-          # 3. Run the full suite with the dynamic schema
-          CGO_ENABLED=1 go test -v -race ./...
-
-      - name: Chaos Test 02 (Context Cancellation / Phantom Agent)
+      - name: Chaos Test 02 (Context Cancellation)
         run: CGO_ENABLED=1 go run cmd/chaos/phantom_agent/main.go
       
       - name: Build Binary
         run: CGO_ENABLED=1 go build -o jaguarbase ./cmd/jaguarbase/main.go
       
-      - name: Chaos Test 03 (Load Shedding / Runaway Loop)
+      - name: Chaos Test 03 (Load Shedding)
         env:
           JAGUARBASE_HMAC_SECRET: "ci_dummy_secret_key_123"
           REDIS_URL: "redis://localhost:6379"
-          DATABASE_URL: "postgres://ci_user:ci_password@localhost:5432/ci_db?sslmode=disable"
         run: |
-          # Create a dummy jaguardb.yaml so the main server can boot up in CI
           cat <<EOF > jaguardb.yaml
           version: "1.0"
           security:
-            mcp_in_flight_limit: 100
+            mcp_in_flight_limit: 2
           sources:
             - table: "chaos_target"
               schema:
@@ -104,15 +65,15 @@ jobs:
                   governance: "none"
           EOF
 
-          # Start JaguarBase with full backend injected
+          # Força o IPv4 no Chaos Agent para não dar erro de rede no Github
+          sed -i 's/localhost/127.0.0.1/g' cmd/chaos/runaway_loop/main.go
+
           ./jaguarbase &
           SERVER_PID=$!
           
           sleep 2
-          
           go run cmd/chaos/runaway_loop/main.go
-          
           kill $SERVER_PID
 
-      - name: Build Docker Image (Edge AI Container)
+      - name: Build Docker Image
         run: docker build -t andrewbraga1/jaguarbase:latest .

@@ -1,0 +1,68 @@
+name: E2E Database Validation (Manual)
+
+on:
+  workflow_dispatch: # Isso cria o botão na interface do GitHub!
+
+jobs:
+  test-e2e:
+    name: Full Infrastructure E2E
+    runs-on: ubuntu-latest
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential gcc postgresql-client
+
+      - name: Seed DB & Run E2E Tests
+        env:
+          JAGUARBASE_HMAC_SECRET: "ci_dummy_secret_key_123"
+          TEST_REDIS_URL: "redis://localhost:6379"
+          TEST_DATABASE_URL: "postgres://ci_user:ci_password@localhost:5432/ci_db?sslmode=disable"
+        run: |
+          sed -i 's/support_tickets/agent_memory/g' internal/adapter/*test.go internal/governance/*test.go
+          sed -i 's/customer_cpf/secret_key/g' internal/adapter/*test.go internal/governance/*test.go
+          sed -i 's/message/instruction/g' internal/adapter/*test.go internal/governance/*test.go
+
+          psql $TEST_DATABASE_URL -c "
+            CREATE TABLE IF NOT EXISTS agent_memory (
+              id SERIAL PRIMARY KEY,
+              secret_key VARCHAR(255),
+              instruction TEXT
+            );
+            INSERT INTO agent_memory (secret_key, instruction) VALUES ('vault_key_999', 'System override authorized');
+          "
+          
+          CGO_ENABLED=1 go test -v -race ./...
