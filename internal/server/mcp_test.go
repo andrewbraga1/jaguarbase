@@ -149,4 +149,34 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 
 		t.Logf("[PASS] MCP VectorSearch successful. Proof: %s...", proof[:15])
 	})
+
+	// 5. Validates API Key protection when JAGUARBASE_API_KEY is configured
+	t.Run("Enforces API Key authentication when configured", func(t *testing.T) {
+		t.Setenv("JAGUARBASE_API_KEY", "edge-secret-token")
+		protectedMCP := server.NewMCPServer(dbEngine, manifest, []byte("mcp-secret"))
+
+		reqPayload := `{"jsonrpc": "2.0", "id": 3, "method": "tools/list"}`
+
+		// Case A: Missing API Key -> 401 Unauthorized
+		unauthReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(reqPayload))
+		unauthReq.Header.Set("Content-Type", "application/json")
+		unauthRec := httptest.NewRecorder()
+		protectedMCP.ServeHTTP(unauthRec, unauthReq)
+
+		if unauthRec.Code != http.StatusUnauthorized {
+			t.Fatalf("Expected 401 Unauthorized without API key, got %d", unauthRec.Code)
+		}
+
+		// Case B: Valid Bearer API Key -> 200 OK
+		authReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(reqPayload))
+		authReq.Header.Set("Content-Type", "application/json")
+		authReq.Header.Set("Authorization", "Bearer edge-secret-token")
+		authRec := httptest.NewRecorder()
+		protectedMCP.ServeHTTP(authRec, authReq)
+
+		if authRec.Code != http.StatusOK {
+			t.Fatalf("Expected 200 OK with valid API key, got %d", authRec.Code)
+		}
+		t.Logf("[PASS] MCP API Key authentication enforced and verified.")
+	})
 }

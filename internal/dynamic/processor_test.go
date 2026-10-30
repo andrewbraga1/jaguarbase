@@ -14,7 +14,7 @@ import (
 type mockVault struct{}
 
 func (m *mockVault) Tokenize(ctx context.Context, colName string, raw string) (string, error) {
-	return "vault_mock_" + raw, nil
+	return "vault_" + colName + "_" + raw, nil
 }
 
 // mockScanner simulates the RE2 scanner.
@@ -32,13 +32,15 @@ func TestProcessor_ProcessRow(t *testing.T) {
 	schema := []config.ColumnDef{
 		{Column: "id", Governance: "none"},
 		{Column: "cpf", Governance: "pii_vault"},
+		{Column: "api_key", Governance: "pii_vault"},
 		{Column: "message", Governance: "untrusted_input"},
 	}
 
-	t.Run("Successfully processes a clean row with PII", func(t *testing.T) {
+	t.Run("Successfully processes a clean row with agnostic PII columns", func(t *testing.T) {
 		rawRow := map[string]any{
 			"id":      1,
 			"cpf":     "123.456.789-00",
+			"api_key": "sk-live-secret-999",
 			"message": "Hello, I need help.",
 		}
 
@@ -47,13 +49,16 @@ func TestProcessor_ProcessRow(t *testing.T) {
 			t.Fatalf("Expected success, got error: %v", err)
 		}
 
-		if safeRow["cpf"] != "vault_mock_123.456.789-00" {
-			t.Errorf("PII Vault failed, got: %v", safeRow["cpf"])
+		if safeRow["cpf"] != "vault_cpf_123.456.789-00" {
+			t.Errorf("PII Vault failed for cpf, got: %v", safeRow["cpf"])
+		}
+		if safeRow["api_key"] != "vault_api_key_sk-live-secret-999" {
+			t.Errorf("PII Vault failed for api_key, got: %v", safeRow["api_key"])
 		}
 		if safeRow["_is_tainted"] != false {
 			t.Errorf("Expected clean row, got tainted")
 		}
-		t.Logf("[PASS] Clean row dynamically processed.")
+		t.Logf("[PASS] Clean row dynamically processed with agnostic tokens.")
 	})
 
 	t.Run("Flags a tainted row", func(t *testing.T) {

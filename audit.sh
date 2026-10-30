@@ -31,7 +31,7 @@ cat "$LOG_DIR/trivy.log" >> "$SUMMARY_FILE"
 # 4. GoSec: Static Application Security Testing (-quiet + quoted pwd)
 echo "⏳ [2/3] Running GoSec (SAST)..."
 echo -e "\n\n--- GOSEC SAST RESULTS ---" >> "$SUMMARY_FILE"
-docker run --rm \
+docker run --rm --entrypoint gosec \
   -v "$(pwd):/app" \
   -w /app \
   securego/gosec:latest -quiet ./... > "$LOG_DIR/gosec.log" 2>&1 || true
