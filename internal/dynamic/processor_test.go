@@ -13,7 +13,7 @@ import (
 // mockVault simulates the Redis vault without network calls.
 type mockVault struct{}
 
-func (m *mockVault) Tokenize(ctx context.Context, raw string) (string, error) {
+func (m *mockVault) Tokenize(ctx context.Context, colName string, raw string) (string, error) {
 	return "vault_mock_" + raw, nil
 }
 

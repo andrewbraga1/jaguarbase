@@ -2,9 +2,12 @@ package governance
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,6 +19,7 @@ const vaultKeyPrefix = "jbase:vault:"
 type Vault struct {
 	client *redis.Client
 	ttl    time.Duration
+	secret []byte
 }
 
 // NewVault initializes the Redis connection and verifies reachability.
@@ -30,9 +34,15 @@ func NewVault(ctx context.Context, redisURL string) (*Vault, error) {
 		return nil, fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
+	secret := os.Getenv("JAGUARBASE_HMAC_SECRET")
+	if secret == "" {
+		secret = "jaguarbase-default-vault-key"
+	}
+
 	return &Vault{
 		client: client,
 		ttl:    24 * time.Hour, // Standard TTL for ephemeral agent sessions
+		secret: []byte(secret),
 	}, nil
 }
 
@@ -41,15 +51,23 @@ func (v *Vault) Close() error {
 	return v.client.Close()
 }
 
-// Tokenize takes a raw PII string, stores it securely, and returns a deterministic token.
-func (v *Vault) Tokenize(ctx context.Context, raw string) (string, error) {
+// Tokenize takes a column name and a raw sensitive string, stores it securely,
+// and returns an agnostic, HMAC-protected deterministic token: vault_{column}_{hash}.
+func (v *Vault) Tokenize(ctx context.Context, columnName string, raw string) (string, error) {
 	if raw == "" {
 		return "", nil // Edge case: do not mask empty strings
 	}
 
-	// Generate deterministic hash for the token
-	hash := sha256.Sum256([]byte(raw))
-	token := "vault_cpf_" + hex.EncodeToString(hash[:])[:8]
+	col := strings.ToLower(strings.TrimSpace(columnName))
+	if col == "" {
+		col = "pii"
+	}
+
+	// Generate deterministic keyed HMAC-SHA256 hash to prevent rainbow table attacks
+	mac := hmac.New(sha256.New, v.secret)
+	mac.Write([]byte(raw))
+	sum := mac.Sum(nil)
+	token := fmt.Sprintf("vault_%s_%s", col, hex.EncodeToString(sum)[:16])
 
 	// Store the real value in Redis
 	key := vaultKeyPrefix + token

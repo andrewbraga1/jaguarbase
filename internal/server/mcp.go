@@ -1,9 +1,12 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/andrewbraga1/jaguarbase/internal/config"
@@ -49,6 +52,7 @@ type MCPServer struct {
 	db              *engine.DuckDBEngine
 	manifest        *config.Manifest
 	hmacSecret      []byte
+	apiKey          []byte
 	inFlightCounter atomic.Int32
 	inFlightLimit   int32
 }
@@ -63,6 +67,7 @@ func NewMCPServer(db *engine.DuckDBEngine, manifest *config.Manifest, secret []b
 		db:            db,
 		manifest:      manifest,
 		hmacSecret:    secret,
+		apiKey:        []byte(os.Getenv("JAGUARBASE_API_KEY")),
 		inFlightLimit: limit,
 	}
 }
@@ -74,6 +79,18 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 🔐 Optional Edge API Key Validation (active when JAGUARBASE_API_KEY is configured)
+	if len(s.apiKey) > 0 {
+		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+		if token == "" {
+			token = r.Header.Get("X-API-Key")
+		}
+		if subtle.ConstantTimeCompare([]byte(token), s.apiKey) != 1 {
+			http.Error(w, `{"jsonrpc": "2.0", "error": {"code": -32001, "message": "Unauthorized: Invalid API Key"}}`, http.StatusUnauthorized)
+			return
+		}
+	}
+
 	// 🛡️ O(1) Load Shedding / Chaos Engineering Resilience
 	current := s.inFlightCounter.Add(1)
 	defer s.inFlightCounter.Add(-1)
@@ -82,6 +99,9 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"jsonrpc": "2.0", "error": {"code": -32000, "message": "Server overloaded (Runaway Loop Protected)"}}`, http.StatusTooManyRequests)
 		return
 	}
+
+	// Enforce 128 KB max payload to protect JSON decoder memory under load
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 
 	var req MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -155,13 +175,19 @@ func (s *MCPServer) handleToolsCall(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 
-	// 2. Execute Vector Search
+	// 2. Validate limit and execute Vector Search
+	const maxSearchLimit = 1000
+	limit := params.Arguments.Limit
+	if limit <= 0 || limit > maxSearchLimit {
+		limit = 10
+	}
+
 	records, err := s.db.SemanticSearch(
 		// Safe Context Creation: Creates a secure context without redundancy
 		r.Context(), // Uses 'r' (*http.Request) passed to ServeHTTP
 		params.Arguments.TableName,
 		params.Arguments.QueryVector,
-		params.Arguments.Limit,
+		limit,
 	)
 	if err != nil {
 		s.sendError(w, req.ID, -32000, fmt.Sprintf("Internal error: %v", err))

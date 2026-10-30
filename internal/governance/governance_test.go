@@ -65,7 +65,7 @@ func TestGovernancePipeline_Integration(t *testing.T) {
 
 			// Apply Vault Tokenization dynamically
 			if cpfVal, ok := record["customer_cpf"].(string); ok && cpfVal != "" {
-				token, err := vault.Tokenize(ctx, cpfVal)
+				token, err := vault.Tokenize(ctx, "cpf", cpfVal)
 				if err != nil {
 					t.Fatalf("Vault failed for record %v: %v", idVal, err)
 				}

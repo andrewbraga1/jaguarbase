@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/andrewbraga1/jaguarbase/internal/config"
 	_ "github.com/marcboeker/go-duckdb"
@@ -21,6 +22,11 @@ func NewDuckDBEngine(ctx context.Context, dsn string) (*DuckDBEngine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open duckdb: %w", err)
 	}
+
+	// Bound CGO / DuckDB connection pool to prevent C++ thread exhaustion under traffic spikes
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ping duckdb: %w", err)

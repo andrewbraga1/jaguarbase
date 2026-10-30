@@ -9,7 +9,7 @@ import (
 
 // VaultProvider defines the contract for any PII tokenization backend (e.g., Redis).
 type VaultProvider interface {
-	Tokenize(ctx context.Context, raw string) (string, error)
+	Tokenize(ctx context.Context, columnName string, raw string) (string, error)
 }
 
 // ScannerProvider defines the contract for prompt injection detection (e.g., RE2 Scanner).
@@ -52,7 +52,7 @@ func (p *Processor) ProcessRow(ctx context.Context, row map[string]any, schema [
 				return nil, fmt.Errorf("Fail-Closed: pii_vault requires string type for column '%s'", colDef.Column)
 			}
 
-			token, err := p.vault.Tokenize(ctx, strVal)
+			token, err := p.vault.Tokenize(ctx, colDef.Column, strVal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to tokenize column '%s': %w", colDef.Column, err)
 			}

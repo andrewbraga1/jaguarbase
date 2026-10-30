@@ -119,8 +119,12 @@ func main() {
 	httpMux.Handle("/mcp", mcpSrv)
 
 	httpServer := &http.Server{
-		Addr:    ":8080",
-		Handler: httpMux,
+		Addr:              ":8080",
+		Handler:           httpMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	log.Println("🧠 MCP Server running on :8080/mcp (AI Agent Plane)")
