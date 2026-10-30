@@ -2,14 +2,15 @@
 
 [🇺🇸 Read in English](README.md) | [🇧🇷 Leia em Português](README.pt-BR.md)
 
-![Go Version](https://img.shields.io/badge/Go-1.23-00ADD8?style=flat&logo=go)
+![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go)
 ![DuckDB](https://img.shields.io/badge/DuckDB-Embedded-FFF000?style=flat)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-success)
+![AppSec](https://img.shields.io/badge/AppSec-Zero_CVEs-brightgreen)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
 **A Zero-Trust, High-Performance Agnostic Vector Engine in Go (SIMD-accelerated via DuckDB C++)**
 
-JaguarBase is a highly decoupled, event-driven infrastructure appliance designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a secure, high-performance bridge between your legacy relational databases (PostgreSQL) and your AI context window, ensuring that no PII leaks and no Prompt Injections reach your LLM.
+JaguarBase is a highly decoupled, event-driven infrastructure appliance designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a secure, high-performance bridge between your transactional databases (e.g., PostgreSQL, MySQL, Kafka streams) and your AI context window, ensuring that no PII leaks and no Prompt Injections reach your LLM.
 
 ---
 
@@ -18,18 +19,18 @@ JaguarBase is a highly decoupled, event-driven infrastructure appliance designed
 Traditional architectures force AI Agents to perform computationally heavy vector math directly on the primary relational database (e.g., PostgreSQL with `pgvector`), spiking CPU usage and risking the stability of core business systems.
 
 **JaguarBase flips the paradigm using CQRS (Command Query Responsibility Segregation):**
-1. **System of Record:** Keep your data safely in your legacy PostgreSQL.
-2. **Event-Driven Sync:** JaguarBase listens to PostgreSQL `LISTEN/NOTIFY` channels and asynchronously pulls/vectorizes the data into its local DuckDB engine without slowing down your transactional DB.
+1. **System of Record:** Keep your data safely in your primary transactional database.
+2. **Event-Driven Sync:** JaguarBase ingests data via event-driven adapters (e.g., PostgreSQL `LISTEN/NOTIFY`, CDC webhooks, or Kafka streams) and asynchronously pulls/vectorizes records into its local DuckDB engine without slowing down your transactional DB.
 3. **Inference at the Edge:** AI Agents query the JaguarBase local cache in milliseconds.
-4. **Result:** Zero network latency for the AI, and absolute zero CPU impact on your primary PostgreSQL.
+4. **Result:** Zero network latency for the AI, and absolute zero CPU impact on your primary databases.
 
 ```mermaid
 graph TD
-    PG[(Legacy PostgreSQL\nSystem of Record)] -- 1. Async Listen/Notify --> JB{JaguarBase\nEdge Cache}
+    Source[(System of Record\nPostgreSQL, MySQL, Kafka...)] -- 1. Event-Driven Sync --> JB{JaguarBase\nEdge Cache}
     JB -- 2. gRPC Plane\n(Sub-10ms) --> Backend[Backend Microservices]
     JB -- 3. MCP Plane\n(JSON-RPC 2.0) --> AI[AI Agents\nClaude, Cursor, Qwen]
     style JB fill:#f9a03f,stroke:#333,stroke-width:2px,color:#000
-    style PG fill:#336791,stroke:#fff,color:#fff
+    style Source fill:#336791,stroke:#fff,color:#fff
 ```
 
 ## 🚀 Key Features (The Edge AI Appliance)
@@ -46,13 +47,13 @@ Every record that enters or leaves JaguarBase passes through a rigorous, fail-cl
 
 ```mermaid
 sequenceDiagram
-    participant PG as PostgreSQL
+    participant Source as Source DB / Stream (e.g. Postgres, Kafka)
     participant JB as JaguarBase Ingestion
     participant Gov as Zero-Trust Governance
     participant DDB as DuckDB (SIMD)
     participant Agent as AI Agent (MCP)
 
-    PG->>JB: 1. Row Inserted (Event)
+    Source->>JB: 1. Event Emitted (CDC / Insert)
     JB->>Gov: 2. Process Row
     Gov-->>Gov: 3. Tokenize PII (Redis) & Flag Injections
     Gov->>DDB: 4. Store Vector (Dynamic Schema)
@@ -63,6 +64,15 @@ sequenceDiagram
 ```
 
 ---
+
+## 🛡️ Enterprise-Grade Security & Hardening
+
+JaguarBase has undergone rigorous AppSec auditing to ensure it meets Enterprise cloud standards:
+
+- **Distroless & Non-Root Execution:** The Docker image runs on an ultra-minimal `gcr.io/distroless/base-nossl-debian12:nonroot` base (with explicitly copied C++ runtimes for DuckDB), completely eliminating unused OS libraries, shells, and unnecessary SSL packages.
+- **Zero Vulnerabilities (Trivy & GoSec):** Continuously scanned. 0 HIGH/CRITICAL vulnerabilities in both the OS layers and Go dependencies.
+- **Cryptographic PII Tokenization:** Data anonymization uses irreversible **HMAC-SHA256** tied dynamically to schema column names (e.g., `vault_cpf_...`, `vault_api_key_...`), immune to Rainbow Table and collision attacks.
+- **Built-In API Shield:** MCP endpoints support optional Bearer Token authentication (`JAGUARBASE_API_KEY`), strict `MaxBytesReader` (128 KB) payload limits, bounded DuckDB CGO connection pools, and HTTP timeouts to prevent memory exhaustion and DoS.
 
 ## 🛠️ Quick Start
 
@@ -118,14 +128,15 @@ Tested on a Dual-Core Intel i7 with 1,000 simultaneous concurrent workers proces
 
 ## 💼 Market Positioning
 
-- **Need to index 1 Billion vectors in the cloud for global search?** Use a distributed engine like Qdrant or Milvus paired with JaguarGate.
+- **Need to index 1 Billion vectors in the cloud for global search?** Use a distributed engine like Qdrant or Milvus paired with [JaguarGate](https://github.com/andrewbraga1/jaguargate).
 - **Need to build a robust Local AI App, Desktop Tool, or protect your Enterprise Postgres from Agentic CPU spikes?** Use **JaguarBase**.
 
 ## 🛣️ Roadmap
 
-- [x] **Phase 1: PoC & Core Domain** - Postgres Adapter, Redis Vault, DuckDB SIMD, Security Handoff validation.
-- [x] **Phase 2: Dynamic Schema Configuration** - `jaguardb.yaml` parser, type-agnostic ingestion, and struct removal.
-- [x] **Phase 3: Vector Search (RAG)** - DuckDB VSS extensions, dynamic embeddings, and fail-closed Semantic Similarity.
-- [x] **Phase 4: Multi-Protocol Edge** - High-performance Edge layer (gRPC) and MCP Server (JSON-RPC 2.0).
-- [x] **Phase 5: Chaos Engineering & Resilience** - O(1) Load Shedding, Context Cancellation, and hardware-level limits.
-- [x] **Phase 6: Containerization & CI/CD** - Multi-stage Dockerfile (Debian Slim + CGO) and deployment automation.
+- [x] **Phase 1: PoC & Core Domain** Postgres Adapter, Redis Vault, DuckDB SIMD, Security Handoff validation.
+- [x] **Phase 2: Dynamic Schema Configuration** `jaguardb.yaml` parser, type-agnostic ingestion, and struct removal.
+- [x] **Phase 3: Vector Search (RAG)** DuckDB VSS extensions, dynamic embeddings, and fail-closed Semantic Similarity.
+- [x] **Phase 4: Multi-Protocol Edge** High-performance Edge layer (gRPC) and MCP Server (JSON-RPC 2.0).
+- [x] **Phase 5: Chaos Engineering & Resilience** O(1) Load Shedding, Context Cancellation, and hardware-level limits.
+- [x] **Phase 6: Containerization & CI/CD** Multi-stage Dockerfile (Distroless Non-Root + CGO) and deployment automation.
+- [x] **Phase 7: Enterprise Security (AppSec)** Zero-Trust Cryptography, API Shields, and Zero-CVE audits.
