@@ -4,7 +4,7 @@
 # Use the official Go image based on Debian Bookworm
 FROM golang:1.23-bookworm AS builder
 
-ENV GOTOOLCHAIN=auto
+ENV GOTOOLCHAIN=go1.26.10
 
 # Install C/C++ compilers required for CGO and go-duckdb
 RUN apt-get update && apt-get install -y build-essential gcc g++
@@ -25,26 +25,27 @@ COPY . .
 # - ldflags "-s -w": Strips debug symbols, reducing binary size
 RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o jaguarbase ./cmd/jaguarbase/main.go
 
+# Create directories for configuration and DuckDB data persistence
+RUN mkdir -p /app/config /app/data && chmod +x /app/jaguarbase
+
 # =========================================================================
 # STAGE 2: Runner (Edge / Production Image)
 # =========================================================================
-# Use Debian Bookworm Slim, minimal but with the correct glibc
-FROM debian:bookworm-slim
-
-# Install security certificates (for HTTPS requests) and clean apt cache
-RUN apt-get update && apt-get install -y ca-certificates tzdata \
-    && rm -rf /var/lib/apt/lists/*
+# Use Distroless Base NoSSL Debian 12 (nonroot) + C++ runtime libs for DuckDB
+FROM gcr.io/distroless/base-nossl-debian12:nonroot
 
 WORKDIR /app
 
-# Copy the compiled binary from Stage 1
-COPY --from=builder /app/jaguarbase /app/jaguarbase
+# Copy C++ runtime libraries required by CGO / go-duckdb (without libssl3)
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/x86_64-linux-gnu/libstdc++.so.6
+COPY --from=builder /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
 
-# Create directories for configuration and DuckDB data persistence
-RUN mkdir -p /app/config /app/data
+# Copy the compiled binary and runtime directories from Stage 1 with nonroot ownership
+COPY --from=builder --chown=nonroot:nonroot /app/jaguarbase /app/jaguarbase
+COPY --from=builder --chown=nonroot:nonroot /app/config /app/config
+COPY --from=builder --chown=nonroot:nonroot /app/data /app/data
 
-# Execution permission
-RUN chmod +x /app/jaguarbase
+USER nonroot:nonroot
 
 # Expose default application ports
 # 8080 : HTTP (MCP JSON-RPC)
@@ -52,4 +53,4 @@ RUN chmod +x /app/jaguarbase
 EXPOSE 8080 50051
 
 # Entry point
-CMD ["/app/jaguarbase"]
+ENTRYPOINT ["/app/jaguarbase"]

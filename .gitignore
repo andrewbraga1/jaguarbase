@@ -22,5 +22,8 @@ jaguardb.yaml
 jaguarbase
 jgate
 
+# Security Audit Logs
+sec_audit_logs/
+
 # Extras
 .env

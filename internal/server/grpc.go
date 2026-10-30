@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/andrewbraga1/jaguarbase/internal/config"
 	"github.com/andrewbraga1/jaguarbase/internal/engine"
@@ -49,7 +50,13 @@ func (s *GRPCEngineServer) VectorSearch(ctx context.Context, req *pb.VectorReque
 	// 2. Execute the Vector Search in DuckDB (assuming 'embedding' as the default vector column)
 	//records, err := s.db.QueryVector(ctx, req.TableName, tableSchema, "embedding", req.QueryVector, int(req.Limit))
 	// CÓDIGO CORRETO (Novo)
-	records, err := s.db.SemanticSearch(ctx, req.TableName, req.QueryVector, int(req.Limit))
+	const maxSearchLimit = 1000
+	limit := int(req.Limit)
+	if limit <= 0 || limit > maxSearchLimit {
+		limit = 10
+	}
+
+	records, err := s.db.SemanticSearch(ctx, req.TableName, req.QueryVector, limit)
 	if err != nil {
 		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
@@ -63,10 +70,15 @@ func (s *GRPCEngineServer) VectorSearch(ctx context.Context, req *pb.VectorReque
 	// 4. Generate Zero-Trust Handoff Proof
 	proof := security.GenerateFrameProof(s.hmacSecret, safePayload)
 
+	totalRows := len(records)
+	if totalRows > math.MaxInt32 {
+		totalRows = math.MaxInt32
+	}
+
 	return &pb.VectorResponse{
 		SafePayload:  safePayload,
 		HandoffProof: proof,
-		TotalRows:    int32(len(records)),
+		TotalRows:    int32(totalRows),
 	}, nil
 }
 
