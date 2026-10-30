@@ -36,7 +36,7 @@ func NewVault(ctx context.Context, redisURL string) (*Vault, error) {
 
 	secret := os.Getenv("JAGUARBASE_HMAC_SECRET")
 	if secret == "" {
-		secret = "jaguarbase-default-vault-key"
+		return nil, fmt.Errorf("JAGUARBASE_HMAC_SECRET environment variable is strictly required for Vault tokenization")
 	}
 
 	return &Vault{

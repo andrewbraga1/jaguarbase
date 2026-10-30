@@ -28,13 +28,19 @@ docker run --rm \
   aquasec/trivy image --quiet --severity HIGH,CRITICAL andrewbraga1/jaguarbase:latest > "$LOG_DIR/trivy.log" 2>&1 || true
 cat "$LOG_DIR/trivy.log" >> "$SUMMARY_FILE"
 
-# 4. GoSec: Static Application Security Testing (-quiet + quoted pwd)
+# 4. GoSec: Static Application Security Testing (pinned toolchain + progress noise filtered)
 echo "⏳ [2/3] Running GoSec (SAST)..."
 echo -e "\n\n--- GOSEC SAST RESULTS ---" >> "$SUMMARY_FILE"
 docker run --rm --entrypoint gosec \
+  -e GOTOOLCHAIN=auto \
+  -v gosec-gocache:/root/go \
   -v "$(pwd):/app" \
   -w /app \
-  securego/gosec:latest -quiet ./... > "$LOG_DIR/gosec.log" 2>&1 || true
+  securego/gosec:latest ./... 2>&1 | grep -v "^\[gosec\]" > "$LOG_DIR/gosec.log" || true
+# Guard: an empty report is meaningless if gosec failed to load the packages
+if grep -q "Golang errors" "$LOG_DIR/gosec.log"; then
+  echo "⚠️  GoSec could not load the Go packages (toolchain mismatch?). Results are NOT valid." | tee -a "$SUMMARY_FILE"
+fi
 cat "$LOG_DIR/gosec.log" >> "$SUMMARY_FILE"
 
 # 5. Govulncheck: Go Dependency Vulnerability Check

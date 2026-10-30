@@ -76,9 +76,12 @@ JaguarBase has undergone rigorous AppSec auditing to ensure it meets Enterprise 
 
 ## 🛠️ Quick Start
 
-You can run JaguarBase entirely via Docker, injecting your YAML configuration at runtime:
+You can run JaguarBase entirely via Docker, injecting your YAML configuration at runtime. Ensure host permissions for the mounted data directory match the container's non-root user (`uid:gid 65532:65532`), or specify `--user`:
 
 ```bash
+# Prepare data directory permissions for nonroot container
+mkdir -p data && chmod 777 data
+
 # 1. Start JaguarBase in Docker
 docker run -d \
   --name jaguarbase-edge \
@@ -100,8 +103,14 @@ CGO_ENABLED=1 go run cmd/jaguarbase/main.go
 
 ## 🧪 Comprehensive Testing Suite
 
-JaguarBase has a 100% test pass rate with the Go Global Race Detector enabled. To run the full integration and unit test suite (including PostgreSQL adapter, Redis Vault, and MCP routing), use the following command:
+JaguarBase has a 100% unit and integration test pass rate with the Go Global Race Detector enabled. 
 
+To run internal unit tests with race detection:
+```bash
+go test -v -race ./internal/... -count=1
+```
+
+To run the full suite against live services (requires PostgreSQL, Redis, Ollama, and an active JaguarBase instance running on `:50051` for end-to-end tests):
 ```bash
 JAGUARBASE_HMAC_SECRET="jaguarbase-super-secret-key-mude-em-prod" \
 LLM_API_URL="http://localhost:11434/api/embeddings" \

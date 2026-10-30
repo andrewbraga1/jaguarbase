@@ -23,6 +23,10 @@ func TestGovernancePipeline_Integration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	if os.Getenv("JAGUARBASE_HMAC_SECRET") == "" {
+		t.Setenv("JAGUARBASE_HMAC_SECRET", "test-secret-key-123")
+	}
+
 	// 1. Initialize Adapters & Governance Modules
 	pg, err := adapter.NewPostgresAdapter(ctx, dbURL)
 	if err != nil {

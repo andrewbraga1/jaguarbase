@@ -76,9 +76,12 @@ O JaguarBase passou por auditorias rigorosas de AppSec para atender aos padrões
 
 ## 🛠️ Início Rápido (Quick Start)
 
-Você pode rodar o JaguarBase inteiramente via Docker, injetando as configurações do seu YAML durante a inicialização:
+Você pode rodar o JaguarBase inteiramente via Docker, injetando as configurações do seu YAML durante a inicialização. Certifique-se de que as permissões do diretório de dados montado correspondam ao usuário non-root do container (`uid:gid 65532:65532`), ou defina permissão apropriada:
 
 ```bash
+# Prepara as permissões do diretório de dados para o container nonroot
+mkdir -p data && chmod 777 data
+
 # 1. Inicie o JaguarBase no Docker
 docker run -d \
   --name jaguarbase-edge \
@@ -100,8 +103,14 @@ CGO_ENABLED=1 go run cmd/jaguarbase/main.go
 
 ## 🧪 Suíte Abrangente de Testes
 
-O JaguarBase possui uma taxa de aprovação de testes de 100% com o *Global Race Detector* do Go ativado. Para executar a suíte completa de testes unitários e de integração (incluindo o adaptador do PostgreSQL, Cofre Redis e Roteamento MCP), use o seguinte comando:
+O JaguarBase possui uma taxa de aprovação de testes de 100% com o *Global Race Detector* do Go ativado. 
 
+Para executar os testes unitários internos com detecção de condição de corrida (race detector):
+```bash
+go test -v -race ./internal/... -count=1
+```
+
+Para executar a suíte completa contra serviços reais (requer PostgreSQL, Redis, Ollama e uma instância ativa do JaguarBase rodando na porta `:50051` para os testes ponta a ponta):
 ```bash
 JAGUARBASE_HMAC_SECRET="jaguarbase-super-secret-key-mude-em-prod" \
 LLM_API_URL="http://localhost:11434/api/embeddings" \
@@ -117,9 +126,9 @@ Testado em um Dual-Core Intel i7 com 1.000 *workers* concorrentes simultâneos p
 
 | Cenário | Total de Requisições | Throughput (Req/Seg) | Taxa de Sucesso |
 | :--- | :--- | :--- | :--- |
-| **[gRPC] Health Ping** | 100,000 | **43.584,82 req/s** | 100% |
-| **[gRPC] Busca Vetorial** | 10,000 | **1.050,87 req/s** | 100% |
-| **[HTTP/MCP] JSON-RPC** | 10,000 | **831,80 req/s** | 100% |
+| **[gRPC] Health Ping** | 100.000 | **43.584,82 req/s** | 100% |
+| **[gRPC] Busca Vetorial** | 10.000 | **1.050,87 req/s** | 100% |
+| **[HTTP/MCP] JSON-RPC** | 10.000 | **831,80 req/s** | 100% |
 
 **Resiliência de Hardware (Chaos Engineering):**
 - **Load Shedding O(1):** Intercepta *Runaway Loops* (ex: loops infinitos do LangChain) e bloqueia as requisições (HTTP 429) na camada do Roteador Go em **< 0.5ms**.
