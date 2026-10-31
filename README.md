@@ -10,7 +10,7 @@
 
 **A Zero-Trust, High-Performance Agnostic Vector Engine in Go (SIMD-accelerated via DuckDB C++)**
 
-JaguarBase is a highly decoupled, event-driven infrastructure appliance designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a secure, high-performance bridge between your transactional databases (e.g., PostgreSQL, MySQL, Kafka streams) and your AI context window, ensuring that no PII leaks and no Prompt Injections reach your LLM.
+JaguarBase is a highly decoupled, event-driven infrastructure appliance designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a secure, high-performance bridge between your transactional databases (e.g., PostgreSQL, MySQL, Kafka streams) and your AI context window, ensuring that sensitive PII is deterministically tokenized **at rest** and poisoned data is quarantined and isolated from semantic retrieval, guaranteeing an untainted context window for your LLM.
 
 ---
 
@@ -37,7 +37,7 @@ graph TD
 
 - **100% Manifest-Driven Architecture:** Configured strictly via `jaguardb.yaml`. You define the schema, JaguarBase adapts dynamically. No hardcoded structs. It uses `virtual: true` definitions to seamlessly decouple raw transactional columns from the enriched RAG vector schema.
 - **In-Process Vector Storage:** Powered by DuckDB + VSS. No external database networks. Extremely fast C++ SIMD vector math inside a Go wrapper.
-- **Zero-Trust Governance:** Built-in PII masking and HMAC Handoff Proofs. Corrupted or malicious prompts are flagged (`_is_tainted`) and mathematically isolated from AI searches before they hit the context window.
+- **Zero-Trust Governance:** Built-in PII masking and HMAC Handoff Proofs. Corrupted or malicious prompts are flagged (`_is_tainted`) during ingestion and excluded at the engine level (`WHERE _is_tainted=false`), protecting the AI's context window.
 - **Dual-Plane Protocol:**
   - **High-Performance Plane (gRPC):** For backend microservices requiring sub-10ms latency.
   - **AI Agent Plane (MCP):** JSON-RPC 2.0 via HTTP/REST for direct integration with AI Agents (Claude Desktop, Cursor, Custom LLMs).
