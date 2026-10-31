@@ -6,6 +6,7 @@
 ![DuckDB](https://img.shields.io/badge/DuckDB-Embedded-FFF000?style=flat)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-success)
 ![AppSec](https://img.shields.io/badge/AppSec-Zero_CVEs-brightgreen)
+![Licença](https://img.shields.io/badge/Licen%C3%A7a-Apache_2.0-blue.svg)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
 **Um Motor Vetorial Agnóstico de Zero-Trust e Alta Performance em Go (Aceleração SIMD via DuckDB C++)**

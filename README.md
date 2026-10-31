@@ -6,6 +6,7 @@
 ![DuckDB](https://img.shields.io/badge/DuckDB-Embedded-FFF000?style=flat)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-success)
 ![AppSec](https://img.shields.io/badge/AppSec-Zero_CVEs-brightgreen)
+![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
 **A Zero-Trust, High-Performance Agnostic Vector Engine in Go (SIMD-accelerated via DuckDB C++)**
