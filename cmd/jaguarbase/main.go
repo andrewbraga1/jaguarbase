@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,7 +37,8 @@ func main() {
 	}
 	manifest, err := config.LoadManifest(configPath)
 	if err != nil {
-		log.Fatalf("Failed to load manifest from %s: %v", configPath, err)
+		cleanConfigPath := strings.ReplaceAll(strings.ReplaceAll(configPath, "\n", ""), "\r", "")
+		log.Fatalf("Failed to load manifest from %s: %v", cleanConfigPath, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -99,6 +101,7 @@ func main() {
 	hmacSecret := []byte(hmacEnv)
 
 	// 5. Start gRPC Server
+	// #nosec G102 -- By design: binds to container edge network interface for gRPC microservice traffic
 	grpcListener, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen for gRPC: %v", err)

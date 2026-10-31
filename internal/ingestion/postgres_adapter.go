@@ -70,6 +70,7 @@ func (p *PostgresAdapter) Watch(ctx context.Context, events chan<- RawRecord) er
 
 // fetchRecordDynamic queries the record and routes columns dynamically.
 func (p *PostgresAdapter) fetchRecordDynamic(ctx context.Context, recordID string) (*RawRecord, error) {
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf("SELECT * FROM %s WHERE id = $1", p.tableName)
 	rows, err := p.db.QueryContext(ctx, query, recordID)
 	if err != nil {
@@ -155,6 +156,7 @@ func (p *PostgresAdapter) FetchBatch(ctx context.Context, tableName string, colu
 	}
 
 	// Build the SELECT query dynamically for historical syncing
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s > $1 ORDER BY %s ASC LIMIT $2",
 		strings.Join(columns, ", "),

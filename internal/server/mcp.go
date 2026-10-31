@@ -221,10 +221,14 @@ func (s *MCPServer) sendError(w http.ResponseWriter, id any, code int, message s
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(res)
+	if err := json.NewEncoder(w).Encode(res); err != nil {
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+	}
 }
 
 func (s *MCPServer) writeJSON(w http.ResponseWriter, res MCPResponse) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(res)
+	if err := json.NewEncoder(w).Encode(res); err != nil {
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+	}
 }

@@ -87,6 +87,7 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	}
 
 	// strings.Join automatically handles trailing commas
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
 		strings.Join(cols, ", "),
@@ -148,6 +149,7 @@ func (e *DuckDBEngine) QueryVector(ctx context.Context, tableName string, schema
 	// Convert queryVector to string for safe cross-boundary CGO parameter passing
 	vectorBytes, _ := json.Marshal(queryVector)
 
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE _is_tainted = false ORDER BY array_cosine_distance(%s, ?::FLOAT[%d]) ASC LIMIT %d",
 		colsBuilder.String(), tableName, vectorCol, len(queryVector), limit,
@@ -168,6 +170,7 @@ func (e *DuckDBEngine) QueryAllClean(ctx context.Context, tableName string, sche
 		colsBuilder.WriteString(col.Column)
 		colsBuilder.WriteString(", ")
 	}
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE _is_tainted = false", colsBuilder.String(), tableName)
 
 	dbRows, err := e.db.QueryContext(ctx, query)
@@ -259,6 +262,7 @@ func (e *DuckDBEngine) SemanticSearch(ctx context.Context, tableName string, que
 	vecStr := string(vecBytes)
 
 	// The magic of DuckDB: array_cosine_similarity calculates the distance between vectors
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf(`
 		SELECT id, content, metadata, array_cosine_similarity(embedding, ?::FLOAT[%d]) as score
 		FROM %s
@@ -302,6 +306,7 @@ func (e *DuckDBEngine) SemanticSearch(ctx context.Context, tableName string, que
 // This is critical for resuming the Historical Backfill (Initial Sync) without duplicating vectors.
 func (d *DuckDBEngine) GetMaxID(ctx context.Context, tableName string, pkColumn string) int {
 	// Query to find the maximum ID. We cast to BIGINT safely.
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
 	query := fmt.Sprintf("SELECT MAX(CAST(%s AS BIGINT)) FROM %s", pkColumn, tableName)
 
 	var maxID sql.NullInt64

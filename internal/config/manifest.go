@@ -3,9 +3,13 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
+
+var identifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // ColumnDef defines the governance rules and types for a specific column.
 type ColumnDef struct {
@@ -41,7 +45,8 @@ type SecurityDef struct {
 
 // LoadManifest reads and parses the YAML configuration file.
 func LoadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
+	cleanPath := filepath.Clean(path)
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest file: %w", err)
 	}
@@ -57,6 +62,18 @@ func LoadManifest(path string) (*Manifest, error) {
 	}
 	if len(manifest.Sources) == 0 {
 		return nil, fmt.Errorf("invalid manifest: no sources defined")
+	}
+
+	// Validate SQL identifier safety for tables and columns (defense-in-depth against SQL injection)
+	for _, src := range manifest.Sources {
+		if !identifierRegex.MatchString(src.Table) {
+			return nil, fmt.Errorf("invalid table name '%s': must match ^[a-zA-Z_][a-zA-Z0-9_]*$", src.Table)
+		}
+		for _, col := range src.Schema {
+			if !identifierRegex.MatchString(col.Column) {
+				return nil, fmt.Errorf("invalid column name '%s' in table '%s': must match ^[a-zA-Z_][a-zA-Z0-9_]*$", col.Column, src.Table)
+			}
+		}
 	}
 
 	return &manifest, nil

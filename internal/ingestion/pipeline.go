@@ -59,7 +59,9 @@ func (p *Pipeline) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			log.Println("🛑 Stopping Ingestion Pipeline gracefully.")
-			p.source.Close()
+			if err := p.source.Close(); err != nil {
+				log.Printf("⚠️ Error closing ingestion source: %v", err)
+			}
 			return
 		case record := <-events:
 			p.processRecord(ctx, record)
@@ -245,7 +247,9 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	safeMessage := fmt.Sprintf("%s (PII Masked)", contentToVectorize)
 
 	// 5. Generate Semantic Embeddings via Local LLM (Ollama)
-	log.Printf("🧠 [Ollama] Generating %s embedding for record %s...", llmModel, record.ID)
+	cleanModel := strings.ReplaceAll(strings.ReplaceAll(llmModel, "\n", ""), "\r", "")
+	cleanID := strings.ReplaceAll(strings.ReplaceAll(record.ID, "\n", ""), "\r", "")
+	log.Printf("🧠 [Ollama] Generating %s embedding for record %s...", cleanModel, cleanID)
 	vector, err := p.embedder.Generate(ctx, safeMessage, llmModel)
 	if err != nil {
 		log.Printf("❌ [Ollama Error]: Failed to generate embedding for record %s: %v", record.ID, err)
