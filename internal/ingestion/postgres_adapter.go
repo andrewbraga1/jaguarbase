@@ -116,14 +116,14 @@ func (p *PostgresAdapter) fetchRecordDynamic(ctx context.Context, recordID strin
 			finalVal = val
 		}
 
-		switch colName {
-		case "id":
+		if colName == "id" {
 			id = fmt.Sprintf("%v", finalVal)
-		case "message", "content":
-			content = fmt.Sprintf("%v", finalVal)
-		default:
-			metaMap[colName] = finalVal
 		}
+		if colName == "message" || colName == "content" {
+			content = fmt.Sprintf("%v", finalVal)
+		}
+		// Retain all raw fields in metaMap to prevent dynamic schema dropping
+		metaMap[colName] = finalVal
 	}
 
 	metaBytes, err := json.Marshal(metaMap)

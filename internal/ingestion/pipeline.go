@@ -196,10 +196,14 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	var tableSchema []config.ColumnDef
 	llmModel := os.Getenv("LLM_MODEL")
 	embeddingType := "FLOAT[3]" // Fallback dimension
+	contentColName := "content" // Fallback content column
 
 	for _, src := range p.manifest.Sources {
 		if src.Table == targetTable {
 			tableSchema = src.Schema
+			if src.ContentColumn != "" {
+				contentColName = src.ContentColumn
+			}
 			if src.LLMModel != "" {
 				llmModel = src.LLMModel
 			}
@@ -226,8 +230,14 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 		log.Printf("⚠️ [Ingestion Warning]: Failed to parse metadata JSON for record %s: %v", record.ID, err)
 	}
 
-	// Ensure core fields are present for governance evaluation
-	rawMap["content"] = record.Content
+	// Ensure core fields are mapped to their canonical schema definitions
+	if record.Content != "" {
+		rawMap[contentColName] = record.Content
+		rawMap["content"] = record.Content
+	} else if val, ok := rawMap[contentColName].(string); ok {
+		record.Content = val
+		rawMap["content"] = val
+	}
 	rawMap["id"] = record.ID
 
 	// 3. ZERO-TRUST GOVERNANCE: Apply PII Masking and Taint Check dynamically
@@ -238,13 +248,17 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	}
 
 	// 4. Prepare the sanitized string for vectorization
+	// Prioritize the sanitized value of the configured content column
 	contentToVectorize := record.Content
-	if safeContent, ok := safeMap["content"].(string); ok {
+	if safeContent, ok := safeMap[contentColName].(string); ok && safeContent != "" {
+		contentToVectorize = safeContent
+	} else if safeContent, ok := safeMap["content"].(string); ok && safeContent != "" {
 		contentToVectorize = safeContent
 	}
 
-	// Semantic marker indicating data masking to the LLM
-	safeMessage := fmt.Sprintf("%s (PII Masked)", contentToVectorize)
+	// Keep canonical content synchronized with the sanitized value
+	safeMap["content"] = contentToVectorize
+	safeMessage := contentToVectorize
 
 	// 5. Generate Semantic Embeddings via Local LLM (Ollama)
 	cleanModel := strings.ReplaceAll(strings.ReplaceAll(llmModel, "\n", ""), "\r", "")
