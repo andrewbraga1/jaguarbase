@@ -82,10 +82,10 @@ JaguarBase has undergone rigorous AppSec auditing to ensure a clean build and mi
 ## ⚠️ Current Stage & Known Limitations (Beta v1.0.0)
 
 To maintain absolute engineering transparency, the current release has the following design boundaries:
-* **Event Ingestion:** Relies on PostgreSQL `LISTEN/NOTIFY` and batch backfilling. Durable CDC via Postgres Logical Replication / Outbox table is on the roadmap.
-* **Cache Updates:** Current ingestion appends incoming records. Idempotent upserts (`ON CONFLICT`) and tombstone propagation for hard deletes are planned for v1.1.
-* **Vector Indexing:** Uses DuckDB's in-process SIMD-accelerated brute-force cosine distance. Approximate Nearest Neighbor (ANN/HNSW) indexing via VSS is being optimized for large-scale datasets.
-* **MCP Protocol:** Exposes JSON-RPC 2.0 `tools/list` and `tools/call`. The full `initialize` lifecycle handshake for direct Claude Desktop integration is currently in progress.
+* **Event Ingestion:** Relies on PostgreSQL `LISTEN/NOTIFY` (with watcher readiness synchronization to prevent race conditions during startup) and durable batch backfilling. Additional CDC connectors via Postgres Logical Replication / Outbox table are on the roadmap.
+* **Cache Updates:** Full idempotent upserts (`INSERT OR REPLACE`) and tombstone propagation for record deletions are implemented and validated. Backfill checkpoints are isolated in an internal metadata table to prevent resume skips.
+* **Vector Indexing:** Uses DuckDB's in-process SIMD-accelerated cosine distance (`array_cosine_similarity`). Approximate Nearest Neighbor (ANN/HNSW) indexing via VSS is supported for offline and embedded setups.
+* **MCP Protocol:** Compliant with Model Context Protocol specification (protocol versions 2024-11-05 and 2025-06-18), featuring full `initialize` handshake, capabilities negotiation, ping, `tools/list`, and typed Content Blocks in `tools/call` for direct integration with Claude Desktop and MCP-compatible AI clients.
 
 ## 🛠️ Quick Start
 
@@ -145,8 +145,8 @@ Tested on a Dual-Core Intel i7 with 1,000 simultaneous concurrent workers proces
 
 **Hardware Resilience (Chaos Engineering):**
 - **O(1) Load Shedding:** Intercepts Runaway Loops (e.g., LangChain infinite loops) and blocks requests (HTTP 429) at the Go Router layer in **< 0.5ms**.
-- **Zero Memory Leaks:** Consumes **< 10MB of Go Heap RAM** while managing hundreds of thousands of vectors.
-- **OS Page Caching:** Intelligently offloads vector indexes to the Linux Kernel Buffer Cache, preventing application-level OOM crashes.
+- **Predictable Memory Footprint:** The Go service layer maintains a lean heap footprint (**< 10MB of Go Heap RAM**), while embedded DuckDB off-heap C++ allocations are managed by DuckDB buffer pooling and offloaded to Linux Kernel page caching, preventing application-level OOM crashes.
+- **OS Page Caching:** Intelligently offloads vector indexes to the Linux Kernel Buffer Cache, ensuring high-throughput local vector queries without memory bloat.
 
 ## 💼 Market Positioning
 

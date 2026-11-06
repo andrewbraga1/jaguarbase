@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +48,12 @@ func TestDuckDB_VectorSearch(t *testing.T) {
 
 		results, err := dbEngine.QueryVector(ctx, tableName, schema, "embedding", queryVector, 2)
 		if err != nil {
-			t.Skipf("Skipping VSS test (Extension might not be downloaded): %v", err)
+			errLower := strings.ToLower(err.Error())
+			if strings.Contains(errLower, "extension") || strings.Contains(errLower, "vss") || strings.Contains(errLower, "download") {
+				t.Skipf("Skipping VSS test (Extension unavailable in offline/sandbox test environment): %v", err)
+			} else {
+				t.Fatalf("QueryVector failed with unexpected query error: %v", err)
+			}
 		}
 
 		if len(results) == 0 {

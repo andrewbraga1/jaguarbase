@@ -127,3 +127,55 @@ However, an in-depth semantic audit identified **critical architectural misalign
 | **P2-1** | Bearer & API Key auth interceptor for gRPC plane | `internal/server/grpc.go` | Medium | **Completed (`fix/gringo-audit-remediation`)** |
 | **P2-2** | PII Vault 128-bit entropy & CDC delete propagation | `vault.go`, `duckdb.go`, `pipeline.go` | Medium | **Completed (`fix/gringo-audit-remediation`)** |
 | **P2-3** | Transparent positioning & heuristic disclaimer in docs | `README.md` & `README.pt-BR.md` | Medium | **Completed** |
+
+---
+
+## 🛡️ Round 2 Hardening: Cache Consistency, Protocol Conformance & Zero-Warning Defenses (`fix/audit-hardening-round-2`)
+
+### 11. Isolated Checkpointing Decoupled from Real-Time Stream IDs
+* **Target Components:** `internal/engine/duckdb.go` (`InitMetadata`, `GetCheckpoint`, `SetCheckpoint`), `internal/ingestion/pipeline.go` (`performBackfill`)
+* **Root Cause:** Resuming backfill after a failure previously queried `SELECT MAX(id) FROM table`. If real-time streaming inserted higher IDs (e.g. ID 1000) while backfill failed at ID 20, restarting the backfill caused records 21..999 to be permanently skipped.
+* **Remediation Implemented:**
+  - Dedicated internal metadata table `_jaguarbase_metadata(key VARCHAR PRIMARY KEY, value VARCHAR)` created in DuckDB.
+  - Backfill progress is persisted under `backfill_checkpoint_<table>` only after batches successfully process.
+  - On restart, backfill resumes strictly from the durable checkpoint, ensuring zero skipped historical records.
+
+### 12. Watcher Readiness Synchronization Signal
+* **Target Components:** `internal/ingestion/source.go` (`ReadyNotifier`), `internal/ingestion/postgres_adapter.go`, `internal/ingestion/pipeline.go` (`Start`)
+* **Root Cause:** Spawning `go source.Watch(...)` concurrently with `performBackfill` had a potential microsecond race condition where the snapshot backfill read began before the PostgreSQL `LISTEN` command was acknowledged by the database.
+* **Remediation Implemented:**
+  - Defined `ReadyNotifier` interface with `Ready() <-chan struct{}`.
+  - `PostgresAdapter` unblocks `ready` channel only after `listener.Listen(channel)` successfully registers.
+  - `pipeline.Start` waits for active listener confirmation before initiating snapshot queries.
+
+### 13. Model Context Protocol (MCP) Official Content Blocks & Version Negotiation
+* **Target Components:** `internal/server/mcp.go`, `internal/server/mcp_test.go`
+* **Root Cause:** `tools/call` returned raw database record maps directly in `content`, violating the MCP 2024-11-05 and 2025-06-18 specifications requiring typed Content Blocks (`[{"type": "text", "text": "..."}]`), causing incompatibility with Claude Desktop. In addition, `initialize` accepted any arbitrary version string.
+* **Remediation Implemented:**
+  - Formatted `tools/call` response with official Content Blocks (`content: [{"type": "text", "text": jsonString}]`), typed `structuredContent`, and `isError: false`.
+  - Added strict protocol version negotiation (`2024-11-05` and `2025-06-18`), rejecting incompatible protocols with JSON-RPC `-32602`.
+
+### 14. Fail-Closed Ingestion & Manifest Validation
+* **Target Components:** `internal/config/manifest.go`, `internal/ingestion/pipeline.go`
+* **Root Cause:** A YAML manifest could declare a `content_column` absent from the table schema or omit primary keys. Furthermore, `pipeline.go` had a fallback to uninspected `record.Content` if the governance output omitted the content column.
+* **Remediation Implemented:**
+  - Manifest parser validates that `content_column` exists in `schema` and that at least one column is marked as `primary_key: true`.
+  - Ingestion pipeline enforces fail-closed behavior: if the content column is missing from governance output, the record is rejected with an error instead of vectorizing raw uninspected text.
+
+### 15. Localhost-by-Default Network Security & Configuration
+* **Target Components:** `cmd/jaguarbase/main.go`
+* **Root Cause:** gRPC and HTTP listeners bound to `0.0.0.0` by default, accepting unauthenticated traffic across all network interfaces when running in development mode.
+* **Remediation Implemented:**
+  - Added `JAGUARBASE_HOST` configuration defaulting to secure `127.0.0.1`.
+  - Explicit warning logged if bound to `0.0.0.0` without `JAGUARBASE_API_KEY`.
+
+### 16. Test Rigor & Chaos Engineering Determinism
+* **Target Components:** `internal/engine/vss_test.go`, `cmd/chaos/runaway_loop/main.go`
+* **Root Cause:** `vss_test.go` swallowed all query errors via `t.Skipf`, masking potential SQL syntax or binder bugs. `cmd/chaos/runaway_loop/main.go` exited with code 0 even when 0 requests were shedded.
+* **Remediation Implemented:**
+  - `vss_test.go` restricts `t.Skipf` strictly to missing VSS extension errors in offline test environments, failing immediately (`t.Fatalf`) on unexpected query errors.
+  - `cmd/chaos/runaway_loop/main.go` exits with `os.Exit(1)` if load shedding fails to reject requests or if all requests fail due to network errors.
+
+### 17. Memory Accounting Accuracy
+* **Target Components:** `README.md`, `README.pt-BR.md`
+* **Remediation Implemented:** Documented the boundary between Go runtime managed heap (<10MB) and DuckDB C++ native off-heap memory, explaining DuckDB buffer pool limits and Linux kernel page cache mechanics.

@@ -126,15 +126,25 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SupportedMCPProtocolVersion is the canonical MCP specification version implemented by JaguarBase.
+const SupportedMCPProtocolVersion = "2024-11-05"
+
+var supportedMCPVersions = map[string]bool{
+	"2024-11-05": true,
+	"2025-06-18": true,
+}
+
 // handleInitialize implements the standard MCP handshake initialization
 func (s *MCPServer) handleInitialize(w http.ResponseWriter, req MCPRequest) {
-	protoVer := "2024-11-05"
+	protoVer := SupportedMCPProtocolVersion
 	if len(req.Params) > 0 {
 		var initParams struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		if err := json.Unmarshal(req.Params, &initParams); err == nil && initParams.ProtocolVersion != "" {
-			protoVer = initParams.ProtocolVersion
+			if supportedMCPVersions[initParams.ProtocolVersion] {
+				protoVer = initParams.ProtocolVersion
+			}
 		}
 	}
 
@@ -257,13 +267,22 @@ func (s *MCPServer) handleToolsCall(w http.ResponseWriter, r *http.Request, req 
 	payloadBytes, _ := json.Marshal(records)
 	proof := security.GenerateFrameProof(s.hmacSecret, payloadBytes)
 
-	// 4. Send successful MCP Response
+	// 4. Send successful MCP Response compliant with official Content Block specification
+	contentBlocks := []map[string]any{
+		{
+			"type": "text",
+			"text": string(payloadBytes),
+		},
+	}
+
 	res := MCPResponse{
 		Jsonrpc: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
-			"content":       records,
-			"handoff_proof": proof,
+			"content":           contentBlocks,
+			"structuredContent": map[string]any{"records": records, "handoff_proof": proof},
+			"handoff_proof":     proof,
+			"isError":           false,
 		},
 	}
 	s.writeJSON(w, res)

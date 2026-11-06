@@ -100,24 +100,49 @@ func main() {
 	}
 	hmacSecret := []byte(hmacEnv)
 
-	// 5. Start gRPC Server
-	// #nosec G102 -- By design: binds to container edge network interface for gRPC microservice traffic
-	grpcListener, err := net.Listen("tcp", ":50051")
-	if err != nil {
-		log.Fatalf("Failed to listen for gRPC: %v", err)
+	// 5. Network configuration: Default to 127.0.0.1 for secure local-only binding
+	host := os.Getenv("JAGUARBASE_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	grpcPort := os.Getenv("JAGUARBASE_GRPC_PORT")
+	if grpcPort == "" {
+		grpcPort = "50051"
+	}
+	httpPort := os.Getenv("JAGUARBASE_HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "8080"
 	}
 
+	grpcAddr := net.JoinHostPort(host, grpcPort)
+	httpAddr := net.JoinHostPort(host, httpPort)
+
 	apiKey := []byte(os.Getenv("JAGUARBASE_API_KEY"))
+	if len(apiKey) == 0 {
+		if host == "0.0.0.0" {
+			log.Printf("⚠️ [SECURITY WARNING] Server bound to 0.0.0.0 without JAGUARBASE_API_KEY! Set JAGUARBASE_API_KEY to prevent unauthorized network access.")
+		} else {
+			log.Printf("⚠️ [Security Notice] Running in unauthenticated development mode bound to localhost (%s).", host)
+		}
+	} else {
+		log.Printf("🔐 Enforcing API Key authentication (bound to %s)", host)
+	}
+
+	// #nosec G102 -- Configurable host binding with 127.0.0.1 secure default
+	grpcListener, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("Failed to listen for gRPC on %s: %v", grpcAddr, err)
+	}
+
 	var grpcOpts []grpc.ServerOption
 	if len(apiKey) > 0 {
-		log.Println("🔐 Enforcing API Key authentication on gRPC server")
 		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(server.UnaryAuthInterceptor(apiKey)))
 	}
 
 	grpcSrv := grpc.NewServer(grpcOpts...)
 	pb.RegisterEngineServiceServer(grpcSrv, server.NewGRPCEngineServer(dbEngine, manifest, hmacSecret))
 
-	log.Println("🚀 gRPC Server running on :50051 (High-Performance Plane)")
+	log.Printf("🚀 gRPC Server running on %s (High-Performance Plane)", grpcAddr)
 	go func() {
 		if err := grpcSrv.Serve(grpcListener); err != nil {
 			log.Fatalf("gRPC server failed: %v", err)
@@ -130,7 +155,7 @@ func main() {
 	httpMux.Handle("/mcp", mcpSrv)
 
 	httpServer := &http.Server{
-		Addr:              ":8080",
+		Addr:              httpAddr,
 		Handler:           httpMux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -138,7 +163,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Println("🧠 MCP Server running on :8080/mcp (AI Agent Plane)")
+	log.Printf("🧠 MCP Server running on http://%s/mcp (AI Agent Plane)", httpAddr)
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server failed: %v", err)

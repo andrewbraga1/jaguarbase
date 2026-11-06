@@ -64,15 +64,38 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("invalid manifest: no sources defined")
 	}
 
-	// Validate SQL identifier safety for tables and columns (defense-in-depth against SQL injection)
+	// Validate SQL identifier safety, content column existence, and primary keys (Fail-Closed)
 	for _, src := range manifest.Sources {
 		if !identifierRegex.MatchString(src.Table) {
 			return nil, fmt.Errorf("invalid table name '%s': must match ^[a-zA-Z_][a-zA-Z0-9_]*$", src.Table)
 		}
+
+		var hasPK bool
+		var foundContentCol bool
+		targetContentCol := src.ContentColumn
+		if targetContentCol == "" {
+			targetContentCol = "content"
+		}
+
 		for _, col := range src.Schema {
 			if !identifierRegex.MatchString(col.Column) {
 				return nil, fmt.Errorf("invalid column name '%s' in table '%s': must match ^[a-zA-Z_][a-zA-Z0-9_]*$", col.Column, src.Table)
 			}
+			if col.PrimaryKey || col.Column == "id" {
+				hasPK = true
+			}
+			if col.Column == targetContentCol {
+				foundContentCol = true
+			}
+		}
+
+		if !hasPK {
+			return nil, fmt.Errorf("invalid manifest: table '%s' must define at least one primary key", src.Table)
+		}
+
+		// Ensure content column is explicitly declared in schema for fail-closed governance
+		if src.ContentColumn != "" && !foundContentCol {
+			return nil, fmt.Errorf("invalid manifest: content_column '%s' in table '%s' is not defined in schema", src.ContentColumn, src.Table)
 		}
 	}
 

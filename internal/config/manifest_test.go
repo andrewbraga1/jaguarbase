@@ -16,6 +16,9 @@ sources:
     type: "postgres"
     table: "users"
     schema:
+      - column: "id"
+        type: "string"
+        primary_key: true
       - column: "cpf"
         type: "string"
         governance: "pii_vault"
@@ -48,8 +51,8 @@ sources:
 		if source.Name != "test_db" || source.Table != "users" {
 			t.Errorf("Source mapping failed")
 		}
-		if source.Schema[0].Governance != "pii_vault" {
-			t.Errorf("Expected pii_vault governance, got %s", source.Schema[0].Governance)
+		if source.Schema[1].Governance != "pii_vault" {
+			t.Errorf("Expected pii_vault governance, got %s", source.Schema[1].Governance)
 		}
 	})
 
@@ -69,6 +72,54 @@ sources:
 		_, err := config.LoadManifest(badFile.Name())
 		if err == nil {
 			t.Errorf("Expected error for invalid yaml, got nil")
+		}
+	})
+
+	t.Run("Fail-Closed: Rejects manifest when content_column is missing from schema", func(t *testing.T) {
+		missingContentYAML := `
+version: "1.0"
+sources:
+  - name: "test_db"
+    type: "postgres"
+    table: "users"
+    content_column: "unmapped_body"
+    schema:
+      - column: "id"
+        type: "string"
+        primary_key: true
+      - column: "cpf"
+        type: "string"
+`
+		tmp, _ := os.CreateTemp("", "missing_content_*.yaml")
+		defer os.Remove(tmp.Name())
+		tmp.Write([]byte(missingContentYAML))
+		tmp.Close()
+
+		_, err := config.LoadManifest(tmp.Name())
+		if err == nil {
+			t.Fatalf("Expected Fail-Closed error when content_column is not defined in schema, got nil")
+		}
+	})
+
+	t.Run("Fail-Closed: Rejects manifest without primary key", func(t *testing.T) {
+		noPKYAML := `
+version: "1.0"
+sources:
+  - name: "test_db"
+    type: "postgres"
+    table: "logs"
+    schema:
+      - column: "message"
+        type: "string"
+`
+		tmp, _ := os.CreateTemp("", "no_pk_*.yaml")
+		defer os.Remove(tmp.Name())
+		tmp.Write([]byte(noPKYAML))
+		tmp.Close()
+
+		_, err := config.LoadManifest(tmp.Name())
+		if err == nil {
+			t.Fatalf("Expected Fail-Closed error when no primary key is defined, got nil")
 		}
 	})
 }

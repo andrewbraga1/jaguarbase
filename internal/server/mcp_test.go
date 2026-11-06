@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -201,17 +200,29 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 		}
 
 		content, ok := resultMap["content"].([]any)
-		if !ok {
-			t.Fatalf("Result 'content' is missing or not an array")
+		if !ok || len(content) != 1 {
+			t.Fatalf("Result 'content' is missing or not an array of length 1: %v", resultMap["content"])
 		}
 
-		if len(content) != 1 {
-			t.Errorf("Expected 1 clean row, got %d", len(content))
+		// Verify MCP typed content block format: type="text"
+		contentBlock, ok := content[0].(map[string]any)
+		if !ok || contentBlock["type"] != "text" {
+			t.Fatalf("Expected MCP content block with type 'text', got: %v", content[0])
 		}
 
-		contentStr := fmt.Sprintf("%v", content)
-		if strings.Contains(contentStr, "Tainted") {
+		textVal, ok := contentBlock["text"].(string)
+		if !ok || !strings.Contains(textVal, "Safe Agent Data") {
+			t.Fatalf("Expected text content to include 'Safe Agent Data', got: %v", textVal)
+		}
+
+		if strings.Contains(textVal, "Tainted") {
 			t.Errorf("Security Leak: Tainted data reached the MCP response!")
+		}
+
+		// Verify structuredContent (MCP 2025-06-18)
+		structured, ok := resultMap["structuredContent"].(map[string]any)
+		if !ok || structured["records"] == nil {
+			t.Errorf("Expected structuredContent with records")
 		}
 
 		proof, _ := resultMap["handoff_proof"].(string)

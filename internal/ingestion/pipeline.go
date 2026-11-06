@@ -51,6 +51,19 @@ func (p *Pipeline) Start(ctx context.Context) {
 		}
 	}()
 
+	// Wait for watcher readiness if the source supports ReadyNotifier to eliminate race window
+	if readySource, ok := p.source.(ReadyNotifier); ok {
+		log.Println("⏳ Waiting for data source watcher to become ready...")
+		select {
+		case <-readySource.Ready():
+			log.Println("✅ Data source watcher is actively listening.")
+		case <-time.After(5 * time.Second):
+			log.Println("⚠️ Data source watcher readiness timed out after 5s; proceeding with backfill.")
+		case <-ctx.Done():
+			return
+		}
+	}
+
 	// 2. PHASE 2: Historical Backfill (Carga Inicial)
 	if err := p.performBackfill(ctx); err != nil {
 		log.Printf("⚠️ [Ingestion Warning]: Backfill encountered an error: %v", err)
@@ -108,10 +121,15 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 	batchSize := 1000
 	totalSynced := 0
 
-	// Retrieve the highest ID currently stored in DuckDB to resume from where we left off
-	// (Note: Requires a GetMaxID function in DuckDBEngine. Defaulting to 0 if not implemented yet.)
-	lastID := p.duckDB.GetMaxID(ctx, tableName, pkColumn)
-	log.Printf("📊 Resuming Backfill for '%s' from ID > %d...", tableName, lastID)
+	// Retrieve checkpoint from isolated metadata store to decouple backfill from real-time streaming events
+	checkpointKey := "backfill_checkpoint_" + tableName
+	lastID := 0
+	if p.duckDB != nil {
+		if cp, err := p.duckDB.GetCheckpoint(ctx, checkpointKey); err == nil && cp > 0 {
+			lastID = cp
+		}
+	}
+	log.Printf("📊 Resuming Backfill for '%s' from checkpoint ID > %d...", tableName, lastID)
 
 	for {
 		// 1. Fetch a batch of historical records dynamically
@@ -123,6 +141,8 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 		if len(records) == 0 {
 			break // No more historical data to sync
 		}
+
+		batchMaxID := lastID
 
 		// 2. Process each historical record through the Zero-Trust Governance and Embedding flow
 		for _, rawMap := range records {
@@ -170,7 +190,7 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 				return fmt.Errorf("backfill halted at record %s (lastID=%d): %w", record.ID, lastID, procErr)
 			}
 
-			// Update lastID for the next batch iteration ONLY after successful processing
+			// Update batchMaxID ONLY after successful processing
 			if rawID, exists := rawMap[pkColumn]; exists {
 				var currentID int
 				switch v := rawID.(type) {
@@ -183,8 +203,18 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 				case float64: // Sometimes JSON unmarshaling forces numbers to float64
 					currentID = int(v)
 				}
-				if currentID > lastID {
-					lastID = currentID
+				if currentID > batchMaxID {
+					batchMaxID = currentID
+				}
+			}
+		}
+
+		// Persist durable checkpoint after successful batch processing
+		if batchMaxID > lastID {
+			lastID = batchMaxID
+			if p.duckDB != nil {
+				if err := p.duckDB.SetCheckpoint(ctx, checkpointKey, lastID); err != nil {
+					log.Printf("⚠️ Failed to persist backfill checkpoint for %s (ID %d): %v", tableName, lastID, err)
 				}
 			}
 		}
@@ -195,6 +225,13 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 		// If we fetched less than the limit, we've hit the end of the table
 		if len(records) < batchSize {
 			break
+		}
+	}
+
+	if p.duckDB != nil {
+		completeKey := "backfill_complete_" + tableName
+		if err := p.duckDB.SetCheckpoint(ctx, completeKey, 1); err != nil {
+			log.Printf("⚠️ Failed to mark backfill complete for %s: %v", tableName, err)
 		}
 	}
 
@@ -274,13 +311,14 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 		return fmt.Errorf("governance failure for record %s: %w", record.ID, err)
 	}
 
-	// 4. Prepare the sanitized string for vectorization
-	// Prioritize the sanitized value of the configured content column
-	contentToVectorize := record.Content
+	// 4. Prepare the sanitized string for vectorization (Fail-Closed: never fall back to raw uninspected content)
+	var contentToVectorize string
 	if safeContent, ok := safeMap[contentColName].(string); ok && safeContent != "" {
 		contentToVectorize = safeContent
 	} else if safeContent, ok := safeMap["content"].(string); ok && safeContent != "" {
 		contentToVectorize = safeContent
+	} else {
+		return fmt.Errorf("fail-closed: content column '%s' missing or empty in governance output for record %s", contentColName, record.ID)
 	}
 
 	// Keep canonical content synchronized with the sanitized value

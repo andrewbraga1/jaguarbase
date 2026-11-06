@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,9 +99,15 @@ func main() {
 	fmt.Printf("🛡️  Shedded (429)     : %d (Rejected by Go Router before DB)\n", overloadCount.Load())
 	fmt.Printf("❌ Failed (Network)  : %d\n", errorCount.Load())
 
+	if errorCount.Load() >= TotalRequests {
+		fmt.Println("❌ FATAL: All requests failed with network errors. Is JaguarBase running?")
+		os.Exit(1)
+	}
+
 	if overloadCount.Load() > 0 {
 		fmt.Println("🏆 VICTORY: The Load Shedding barrier successfully protected the database!")
 	} else {
-		fmt.Println("⚠️  WARNING: No requests were shed. The database might have absorbed the full hit.")
+		fmt.Println("❌ FAILURE: No requests were shed (expected 429 Too Many Requests). Database was not protected!")
+		os.Exit(1)
 	}
 }

@@ -126,3 +126,55 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 | **P2-1** | Interceptor de autenticação Bearer & API Key no gRPC | `internal/server/grpc.go` | Médio | **Concluído (`fix/gringo-audit-remediation`)** |
 | **P2-2** | Entropia 128-bit do Vault e propagação de Deletes CDC | `vault.go`, `duckdb.go`, `pipeline.go` | Médio | **Concluído (`fix/gringo-audit-remediation`)** |
 | **P2-3** | Documentação e testes de regressão dos fluxos reais | `README.md` & `README.pt-BR.md` | Médio | **Concluído** |
+
+---
+
+## 🛡️ Rodada 2 de Hardening: Consistência de Cache, Conformidade de Protocolo e Defesas Zero-Warning (`fix/audit-hardening-round-2`)
+
+### 11. Checkpointing Isolado em Tabela de Metadados
+* **Localização:** `internal/engine/duckdb.go` (`InitMetadata`, `GetCheckpoint`, `SetCheckpoint`), `internal/ingestion/pipeline.go` (`performBackfill`)
+* **Descrição do Problema:** A retomada do backfill após falha consultava `SELECT MAX(id) FROM table`. Se o streaming em tempo real inserisse IDs maiores (ex.: ID 1000) enquanto o backfill falhava no ID 20, ao reiniciar o backfill pulava permanentemente os registros de 21 a 999.
+* **Remediação Implementada:**
+  - Criada tabela interna de metadados `_jaguarbase_metadata(key VARCHAR PRIMARY KEY, value VARCHAR)` no DuckDB.
+  - O progresso do backfill é persistido sob a chave `backfill_checkpoint_<table>` exclusivamente após o processamento bem-sucedido de cada lote.
+  - Ao reiniciar, o backfill retoma estritamente do checkpoint durável, eliminando qualquer pulo de registros históricos.
+
+### 12. Sinal de Sincronização de Prontidão do Watcher
+* **Localização:** `internal/ingestion/source.go` (`ReadyNotifier`), `internal/ingestion/postgres_adapter.go`, `internal/ingestion/pipeline.go` (`Start`)
+* **Descrição do Problema:** Disparar `go source.Watch(...)` concorrentemente com `performBackfill` criava uma janela de corrida (race window) em microssegundos onde a leitura da carga inicial podia começar antes que o comando `LISTEN` do PostgreSQL fosse confirmado pelo banco.
+* **Remediação Implementada:**
+  - Definida interface `ReadyNotifier` com método `Ready() <-chan struct{}`.
+  - O `PostgresAdapter` desbloqueia o canal `ready` apenas após `listener.Listen(channel)` registrar a escuta ativa no banco.
+  - O `pipeline.Start` aguarda a confirmação de prontidão antes de iniciar o snapshot de dados legados.
+
+### 13. Blocos Tipados de Conteúdo e Negociação de Versão MCP
+* **Localização:** `internal/server/mcp.go`, `internal/server/mcp_test.go`
+* **Descrição do Problema:** O método `tools/call` retornava os registros do banco diretamente em `content`, violando as especificações oficiais MCP (2024-11-05 e 2025-06-18) que exigem blocos de conteúdo tipados (`[{"type": "text", "text": "..."}]`), o que quebrava clientes como Claude Desktop. Além disso, o handshake `initialize` aceitava qualquer versão de protocolo arbitrariamente.
+* **Remediação Implementada:**
+  - Resposta do `tools/call` formatada com Content Blocks oficiais (`content: [{"type": "text", "text": jsonString}]`), campo adicional `structuredContent` e `isError: false`.
+  - Adicionada negociação estrita de versão de protocolo (`2024-11-05` e `2025-06-18`), rejeitando versões incompatíveis com erro JSON-RPC `-32602`.
+
+### 14. Ingestão Fail-Closed e Validação Rigorosa de Manifesto
+* **Localização:** `internal/config/manifest.go`, `internal/ingestion/pipeline.go`
+* **Descrição do Problema:** O manifesto YAML podia declarar um `content_column` inexistente no schema ou omitir chaves primárias. No `pipeline.go`, existia um fallback para o `record.Content` bruto não inspecionado caso a saída da governança não contivesse a coluna de conteúdo.
+* **Remediação Implementada:**
+  - O parser de manifesto valida obrigatoriamente se `content_column` existe no `schema` e se ao menos uma coluna é chave primária (`primary_key: true`).
+  - O pipeline de ingestão opera em modo fail-closed: se a coluna de conteúdo sanitizada estiver ausente na saída da governança, o registro é rejeitado com erro em vez de vetorizar o texto bruto.
+
+### 15. Segurança de Rede Localhost-by-Default
+* **Localização:** `cmd/jaguarbase/main.go`
+* **Descrição do Problema:** Os servidores gRPC e HTTP realizavam bind padrão em `0.0.0.0`, aceitando conexões não autenticadas em todas as interfaces de rede quando executados em ambiente de desenvolvimento sem API key configurada.
+* **Remediação Implementada:**
+  - Adicionada variável de configuração `JAGUARBASE_HOST` com padrão seguro `127.0.0.1`.
+  - Alerta explícito de segurança registrado em log se houver bind em `0.0.0.0` sem `JAGUARBASE_API_KEY`.
+
+### 16. Rigor em Testes e Determinismo em Engenharia do Caos
+* **Localização:** `internal/engine/vss_test.go`, `cmd/chaos/runaway_loop/main.go`
+* **Descrição do Problema:** O teste `vss_test.go` engolia qualquer erro de consulta via `t.Skipf`, mascarando possíveis falhas de sintaxe SQL ou do binder. O teste de caos `runaway_loop` finalizava com código 0 mesmo quando 0 requisições eram descartadas.
+* **Remediação Implementada:**
+  - O teste `vss_test.go` restringe `t.Skipf` exclusivamente à ausência real da extensão VSS em ambientes de teste offline; qualquer outro erro de consulta falha imediatamente (`t.Fatalf`).
+  - O teste `cmd/chaos/runaway_loop/main.go` encerra com `os.Exit(1)` caso o rate limit / load shedding não descarte requisições conforme esperado ou caso o alvo esteja inacessível.
+
+### 17. Precisão na Métricas de Memória
+* **Localização:** `README.md`, `README.pt-BR.md`
+* **Remediação Implementada:** Documentada claramente a fronteira entre a Heap gerenciada pelo Go (<10MB) e a memória nativa C++ do DuckDB alocada fora da heap via CGO, detalhando os limites do buffer pool do DuckDB e o cache de páginas do kernel Linux.
