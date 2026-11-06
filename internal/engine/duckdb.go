@@ -44,7 +44,7 @@ func (e *DuckDBEngine) Close() error {
 
 func (e *DuckDBEngine) InitSchema(ctx context.Context, tableName string, schema []config.ColumnDef) error {
 	var colsBuilder strings.Builder
-	for _, col := range schema {
+	for i, col := range schema {
 		sqlType := "VARCHAR"
 		switch col.Type {
 		case "integer":
@@ -61,7 +61,12 @@ func (e *DuckDBEngine) InitSchema(ctx context.Context, tableName string, schema 
 		colsBuilder.WriteString(col.Column)
 		colsBuilder.WriteString(" ")
 		colsBuilder.WriteString(sqlType)
-		colsBuilder.WriteString(", ")
+		if col.PrimaryKey {
+			colsBuilder.WriteString(" PRIMARY KEY")
+		}
+		if i < len(schema)-1 {
+			colsBuilder.WriteString(", ")
+		}
 	}
 
 	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s);", tableName, colsBuilder.String())
@@ -80,15 +85,25 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	// 1. Build columns and placeholders 100% dynamically based ONLY on the provided schema
 	var cols []string
 	var placeholders []string
+	var pkCol string
 
 	for _, col := range schema {
 		cols = append(cols, col.Column)
 		placeholders = append(placeholders, "?")
+		if col.PrimaryKey {
+			pkCol = col.Column
+		}
+	}
+
+	insertVerb := "INSERT INTO"
+	if pkCol != "" {
+		insertVerb = "INSERT OR REPLACE INTO"
 	}
 
 	// strings.Join automatically handles trailing commas
 	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+	query := fmt.Sprintf("%s %s (%s) VALUES (%s)",
+		insertVerb,
 		tableName,
 		strings.Join(cols, ", "),
 		strings.Join(placeholders, ", "),
@@ -237,7 +252,7 @@ func (e *DuckDBEngine) AutoMigrate(ctx context.Context, manifest *config.Manifes
 		// 2. Dynamically build the query using the extracted embedding type
 		query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id VARCHAR,
+			id VARCHAR PRIMARY KEY,
 			content VARCHAR,
 			metadata JSON,
 			embedding %s,

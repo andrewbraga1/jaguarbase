@@ -59,4 +59,46 @@ func TestDuckDBEngine_DynamicIntegration(t *testing.T) {
 			t.Logf("[PASS] Dynamic Safe Record: ID=%v | CPF=%v", record["id"], record["cpf"])
 		}
 	})
+
+	t.Run("Idempotent Upsert and Primary Key deduplication", func(t *testing.T) {
+		tableName := "upsert_test"
+		schema := []config.ColumnDef{
+			{Column: "id", Type: "VARCHAR", PrimaryKey: true},
+			{Column: "content", Type: "string"},
+			{Column: "_is_tainted", Type: "BOOLEAN"},
+		}
+
+		if err := dbEngine.InitSchema(ctx, tableName, schema); err != nil {
+			t.Fatalf("InitSchema failed: %v", err)
+		}
+
+		// Initial insert
+		initial := []map[string]any{
+			{"id": "doc-1", "content": "original content", "_is_tainted": false},
+		}
+		if err := dbEngine.InsertBatch(ctx, tableName, schema, initial); err != nil {
+			t.Fatalf("Initial InsertBatch failed: %v", err)
+		}
+
+		// Re-inserting the same ID with updated content must replace, NOT duplicate
+		updated := []map[string]any{
+			{"id": "doc-1", "content": "updated content", "_is_tainted": false},
+		}
+		if err := dbEngine.InsertBatch(ctx, tableName, schema, updated); err != nil {
+			t.Fatalf("Idempotent re-insert failed: %v", err)
+		}
+
+		records, err := dbEngine.QueryAllClean(ctx, tableName, schema)
+		if err != nil {
+			t.Fatalf("QueryAllClean failed: %v", err)
+		}
+
+		if len(records) != 1 {
+			t.Fatalf("Expected exactly 1 record after upsert, got %d (duplicate created!)", len(records))
+		}
+
+		if records[0]["content"] != "updated content" {
+			t.Errorf("Expected content 'updated content', got '%v'", records[0]["content"])
+		}
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/andrewbraga1/jaguarbase/internal/ai"
 	"github.com/andrewbraga1/jaguarbase/internal/config"
@@ -36,18 +37,13 @@ func NewPipeline(source DataSource, duckDB *engine.DuckDBEngine, manifest *confi
 }
 
 // Start begins processing events asynchronously from the configured data source.
-// It performs a Historical Backfill first, then transitions to Real-Time Streaming.
+// It starts the real-time event watcher first to avoid event loss during backfill,
+// runs the historical backfill, and processes incoming events with idempotent upsert.
 func (p *Pipeline) Start(ctx context.Context) {
 	log.Println("🔄 Starting Agnostic Ingestion Pipeline...")
 
-	// 1. PHASE 1: Historical Backfill (Carga Inicial)
-	if err := p.performBackfill(ctx); err != nil {
-		log.Printf("⚠️ [Ingestion Warning]: Backfill encountered an error (skipping to real-time): %v", err)
-	}
-
-	// 2. PHASE 2: Real-Time Streaming (CDC / Watch)
-	log.Println("📡 Switching to Real-Time Streaming mode...")
-	events := make(chan RawRecord, 100)
+	// 1. PHASE 1: Start Real-Time Watcher immediately to eliminate event loss window
+	events := make(chan RawRecord, 2048)
 
 	go func() {
 		if err := p.source.Watch(ctx, events); err != nil {
@@ -55,6 +51,13 @@ func (p *Pipeline) Start(ctx context.Context) {
 		}
 	}()
 
+	// 2. PHASE 2: Historical Backfill (Carga Inicial)
+	if err := p.performBackfill(ctx); err != nil {
+		log.Printf("⚠️ [Ingestion Warning]: Backfill encountered an error: %v", err)
+	}
+
+	// 3. PHASE 3: Real-Time Event Ingestion
+	log.Println("📡 Switching to Real-Time Streaming mode...")
 	for {
 		select {
 		case <-ctx.Done():
@@ -64,7 +67,9 @@ func (p *Pipeline) Start(ctx context.Context) {
 			}
 			return
 		case record := <-events:
-			p.processRecord(ctx, record)
+			if err := p.processRecord(ctx, record); err != nil {
+				log.Printf("❌ [Real-time Ingestion Error]: Failed to process record %s: %v", record.ID, err)
+			}
 		}
 	}
 }
@@ -147,12 +152,25 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 				Metadata: string(metaBytes),
 			}
 
-			// Synchronous processing ensures we don't overwhelm the local LLM
-			p.processRecord(ctx, record)
+			// Synchronous processing with retries ensures we don't overwhelm the local LLM
+			var procErr error
+			for attempt := 1; attempt <= 3; attempt++ {
+				procErr = p.processRecord(ctx, record)
+				if procErr == nil {
+					break
+				}
+				log.Printf("⚠️ [Backfill Retry %d/3] Failed to process record %s: %v", attempt, record.ID, procErr)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(attempt*200) * time.Millisecond):
+				}
+			}
+			if procErr != nil {
+				return fmt.Errorf("backfill halted at record %s (lastID=%d): %w", record.ID, lastID, procErr)
+			}
 
-			// Update lastID for the next batch iteration
-			// Assumes numeric IDs. For UUIDs, pagination logic would differ.
-			// Update lastID for the next batch iteration robustly
+			// Update lastID for the next batch iteration ONLY after successful processing
 			if rawID, exists := rawMap[pkColumn]; exists {
 				var currentID int
 				switch v := rawID.(type) {
@@ -186,7 +204,7 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 
 // processRecord handles the end-to-end flow for a single record: schema resolution,
 // governance enforcement, embedding generation, and dynamic storage.
-func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
+func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 	targetTable := record.Table
 	if targetTable == "" {
 		targetTable = p.manifest.Sources[0].Table
@@ -218,8 +236,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	}
 
 	if len(tableSchema) == 0 {
-		log.Printf("❌ [Ingestion Error]: Schema not found for target table '%s'", targetTable)
-		return
+		return fmt.Errorf("schema not found for target table '%s'", targetTable)
 	}
 
 	// 2. Prepare dynamic map for the Governance Processor
@@ -244,7 +261,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	safeMap, err := p.processor.ProcessRow(ctx, rawMap, tableSchema)
 	if err != nil {
 		log.Printf("❌ [Governance Error]: Record %s rejected by Fail-Closed rules: %v", record.ID, err)
-		return // Abort ingestion to prevent security leaks
+		return fmt.Errorf("governance failure for record %s: %w", record.ID, err)
 	}
 
 	// 4. Prepare the sanitized string for vectorization
@@ -267,7 +284,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	vector, err := p.embedder.Generate(ctx, safeMessage, llmModel)
 	if err != nil {
 		log.Printf("❌ [Ollama Error]: Failed to generate embedding for record %s: %v", record.ID, err)
-		return
+		return fmt.Errorf("embedding generation failed for record %s: %w", record.ID, err)
 	}
 
 	// 6. Restructure metadata payload for storage (filtering out top-level schema columns)
@@ -294,17 +311,19 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) {
 	}
 
 	targetSchemaDef := []config.ColumnDef{
-		{Column: "id", Type: "VARCHAR"},
+		{Column: "id", Type: "VARCHAR", PrimaryKey: true},
 		{Column: "content", Type: "VARCHAR"},
 		{Column: "metadata", Type: "JSON"},
 		{Column: "embedding", Type: embeddingType},
 		{Column: "_is_tainted", Type: "BOOLEAN"},
 	}
 
-	// 8. Commit to Vector Storage (DuckDB)
+	// 8. Commit to Vector Storage (DuckDB with idempotent upsert)
 	if err := p.duckDB.InsertBatch(ctx, targetTable, targetSchemaDef, []map[string]any{finalRecord}); err != nil {
 		log.Printf("❌ [DuckDB Insert Error]: Failed to store record %s: %v", record.ID, err)
-	} else {
-		log.Printf("⚡ [Ingestion] Record %s vectorized and securely stored in '%s'.", record.ID, targetTable)
+		return fmt.Errorf("duckdb insert failed for record %s: %w", record.ID, err)
 	}
+
+	log.Printf("⚡ [Ingestion] Record %s vectorized and securely stored in '%s'.", record.ID, targetTable)
+	return nil
 }

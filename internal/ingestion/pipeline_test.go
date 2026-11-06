@@ -28,9 +28,13 @@ func (m *mockScanner) CheckTaint(payload string) bool {
 
 type mockEmbedder struct {
 	lastTextEmbedded string
+	shouldFail       bool
 }
 
 func (m *mockEmbedder) Generate(ctx context.Context, text string, model string) ([]float32, error) {
+	if m.shouldFail {
+		return nil, fmt.Errorf("simulated embedder failure")
+	}
 	m.lastTextEmbedded = text
 	return []float32{0.1, 0.2, 0.3}, nil
 }
@@ -239,6 +243,26 @@ func TestPipeline_ProcessRecord_ContentColumnMapping(t *testing.T) {
 		}
 		if !strings.Contains(embedder.lastTextEmbedded, "vault_token_user_secret_masked") {
 			t.Errorf("Expected tokenized secret, got: %s", embedder.lastTextEmbedded)
+		}
+	})
+
+	t.Run("Backfill halts on embedder error without advancing checkpoint", func(t *testing.T) {
+		pipeline, _, embedder := setupTestPipeline(t, "message")
+		embedder.shouldFail = true
+
+		source := &mockSource{
+			batchRecords: []map[string]any{
+				{"id": 201, "message": "Record that will fail", "customer_cpf": "000"},
+			},
+		}
+		pipeline.source = source
+
+		err := pipeline.performBackfill(ctx)
+		if err == nil {
+			t.Fatalf("Expected backfill to fail and return error, got nil")
+		}
+		if !strings.Contains(err.Error(), "backfill halted") {
+			t.Errorf("Expected 'backfill halted' in error, got: %v", err)
 		}
 	})
 }
