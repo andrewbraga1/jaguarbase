@@ -10,6 +10,10 @@ import (
 	"github.com/andrewbraga1/jaguarbase/internal/engine"
 	"github.com/andrewbraga1/jaguarbase/internal/server"
 	pb "github.com/andrewbraga1/jaguarbase/pkg/api/v1/pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestGRPCEngineServer_Integration(t *testing.T) {
@@ -87,5 +91,45 @@ func TestGRPCEngineServer_Integration(t *testing.T) {
 		}
 
 		t.Logf("[PASS] gRPC VectorSearch successful. Proof: %s...", res.HandoffProof[:15])
+	})
+
+	// 5. Test UnaryAuthInterceptor enforcement
+	t.Run("UnaryAuthInterceptor enforces API Key authentication", func(t *testing.T) {
+		apiKey := []byte("edge-grpc-secret-999")
+		interceptor := server.UnaryAuthInterceptor(apiKey)
+
+		dummyHandler := func(ctx context.Context, req any) (any, error) {
+			return "success", nil
+		}
+		info := &grpc.UnaryServerInfo{FullMethod: "/EngineService/VectorSearch"}
+
+		// Case A: Missing metadata -> Unauthenticated
+		_, err := interceptor(context.Background(), nil, info, dummyHandler)
+		if status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("Expected Unauthenticated for missing metadata, got: %v", err)
+		}
+
+		// Case B: Invalid Bearer key -> Unauthenticated
+		badCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer wrong-key"))
+		_, err = interceptor(badCtx, nil, info, dummyHandler)
+		if status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("Expected Unauthenticated for invalid key, got: %v", err)
+		}
+
+		// Case C: Valid Bearer key -> Success
+		goodBearerCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer edge-grpc-secret-999"))
+		res, err := interceptor(goodBearerCtx, nil, info, dummyHandler)
+		if err != nil || res != "success" {
+			t.Fatalf("Expected success with valid Bearer key, got: %v, res: %v", err, res)
+		}
+
+		// Case D: Valid X-API-Key -> Success
+		goodKeyCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-api-key", "edge-grpc-secret-999"))
+		res, err = interceptor(goodKeyCtx, nil, info, dummyHandler)
+		if err != nil || res != "success" {
+			t.Fatalf("Expected success with valid X-API-Key, got: %v, res: %v", err, res)
+		}
+
+		t.Logf("[PASS] UnaryAuthInterceptor correctly validates Bearer and X-API-Key headers.")
 	})
 }

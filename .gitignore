@@ -19,8 +19,8 @@ data/
 jaguardb.yaml
 
 # Binaries
-jaguarbase
-jgate
+/jaguarbase
+/jgate
 
 # Security Audit Logs
 sec_audit_logs/

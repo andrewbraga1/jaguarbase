@@ -51,11 +51,18 @@ func (v *Vault) Close() error {
 	return v.client.Close()
 }
 
-// Tokenize takes a column name and a raw sensitive string, stores it securely,
-// and returns an agnostic, HMAC-protected deterministic token: vault_{column}_{hash}.
-func (v *Vault) Tokenize(ctx context.Context, columnName string, raw string) (string, error) {
+// NewVaultWithSecret creates an in-memory Vault representation with secret key (for testing or token generation).
+func NewVaultWithSecret(secret []byte) *Vault {
+	return &Vault{
+		ttl:    24 * time.Hour,
+		secret: secret,
+	}
+}
+
+// GenerateToken derives a deterministic token with 128 bits of entropy (32 hex characters).
+func (v *Vault) GenerateToken(columnName string, raw string) string {
 	if raw == "" {
-		return "", nil // Edge case: do not mask empty strings
+		return ""
 	}
 
 	col := strings.ToLower(strings.TrimSpace(columnName))
@@ -63,11 +70,20 @@ func (v *Vault) Tokenize(ctx context.Context, columnName string, raw string) (st
 		col = "pii"
 	}
 
-	// Generate deterministic keyed HMAC-SHA256 hash to prevent rainbow table attacks
 	mac := hmac.New(sha256.New, v.secret)
 	mac.Write([]byte(raw))
 	sum := mac.Sum(nil)
-	token := fmt.Sprintf("vault_%s_%s", col, hex.EncodeToString(sum)[:16])
+	return fmt.Sprintf("vault_%s_%s", col, hex.EncodeToString(sum)[:32])
+}
+
+// Tokenize takes a column name and a raw sensitive string, stores it securely,
+// and returns an agnostic, HMAC-protected deterministic token: vault_{column}_{hash}.
+func (v *Vault) Tokenize(ctx context.Context, columnName string, raw string) (string, error) {
+	if raw == "" {
+		return "", nil // Edge case: do not mask empty strings
+	}
+
+	token := v.GenerateToken(columnName, raw)
 
 	// Store the real value in Redis
 	key := vaultKeyPrefix + token

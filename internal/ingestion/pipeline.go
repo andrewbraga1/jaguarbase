@@ -210,6 +210,16 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 		targetTable = p.manifest.Sources[0].Table
 	}
 
+	// 0. Handle Deletion / Tombstone event
+	if record.IsDeleted {
+		log.Printf("🗑️ [Ingestion] Purging deleted record %s from vector cache '%s'...", record.ID, targetTable)
+		if err := p.duckDB.DeleteRecord(ctx, targetTable, "id", record.ID); err != nil {
+			return fmt.Errorf("failed to purge record %s from duckdb: %w", record.ID, err)
+		}
+		log.Printf("✅ [Ingestion] Successfully purged record %s from vector cache '%s'.", record.ID, targetTable)
+		return nil
+	}
+
 	// 1. Resolve table schema and configurations from the Manifest
 	var tableSchema []config.ColumnDef
 	llmModel := os.Getenv("LLM_MODEL")

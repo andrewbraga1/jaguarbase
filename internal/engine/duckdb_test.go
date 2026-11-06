@@ -101,4 +101,42 @@ func TestDuckDBEngine_DynamicIntegration(t *testing.T) {
 			t.Errorf("Expected content 'updated content', got '%v'", records[0]["content"])
 		}
 	})
+
+	t.Run("DeleteRecord successfully purges row from table", func(t *testing.T) {
+		tableName := "delete_test"
+		schema := []config.ColumnDef{
+			{Column: "id", Type: "VARCHAR", PrimaryKey: true},
+			{Column: "content", Type: "string"},
+			{Column: "_is_tainted", Type: "BOOLEAN"},
+		}
+
+		if err := dbEngine.InitSchema(ctx, tableName, schema); err != nil {
+			t.Fatalf("InitSchema failed: %v", err)
+		}
+
+		data := []map[string]any{
+			{"id": "doc-to-del", "content": "will be deleted", "_is_tainted": false},
+			{"id": "doc-to-keep", "content": "will stay", "_is_tainted": false},
+		}
+		if err := dbEngine.InsertBatch(ctx, tableName, schema, data); err != nil {
+			t.Fatalf("InsertBatch failed: %v", err)
+		}
+
+		// Delete doc-to-del
+		if err := dbEngine.DeleteRecord(ctx, tableName, "id", "doc-to-del"); err != nil {
+			t.Fatalf("DeleteRecord failed: %v", err)
+		}
+
+		records, err := dbEngine.QueryAllClean(ctx, tableName, schema)
+		if err != nil {
+			t.Fatalf("QueryAllClean failed: %v", err)
+		}
+
+		if len(records) != 1 {
+			t.Fatalf("Expected exactly 1 record after delete, got %d", len(records))
+		}
+		if records[0]["id"] != "doc-to-keep" {
+			t.Errorf("Expected remaining record to be 'doc-to-keep', got '%v'", records[0]["id"])
+		}
+	})
 }

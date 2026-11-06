@@ -5,10 +5,11 @@ import "context"
 // RawRecord represents an agnostic data row fetched from any transactional source.
 // Used primarily for real-time events captured via Watch.
 type RawRecord struct {
-	ID       string
-	Content  string
-	Metadata string // JSON payload for dynamic columns (CPF, status, dates)
-	Table    string // The source table name for dynamic routing
+	ID        string
+	Content   string
+	Metadata  string // JSON payload for dynamic columns (CPF, status, dates)
+	Table     string // The source table name for dynamic routing
+	IsDeleted bool   // True if the record was removed in the primary system of record (tombstone)
 }
 
 // DataSource defines the contract for any external database adapter.

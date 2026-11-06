@@ -106,7 +106,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen for gRPC: %v", err)
 	}
-	grpcSrv := grpc.NewServer()
+
+	apiKey := []byte(os.Getenv("JAGUARBASE_API_KEY"))
+	var grpcOpts []grpc.ServerOption
+	if len(apiKey) > 0 {
+		log.Println("🔐 Enforcing API Key authentication on gRPC server")
+		grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(server.UnaryAuthInterceptor(apiKey)))
+	}
+
+	grpcSrv := grpc.NewServer(grpcOpts...)
 	pb.RegisterEngineServiceServer(grpcSrv, server.NewGRPCEngineServer(dbEngine, manifest, hmacSecret))
 
 	log.Println("🚀 gRPC Server running on :50051 (High-Performance Plane)")

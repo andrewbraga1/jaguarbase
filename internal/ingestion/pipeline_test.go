@@ -265,4 +265,53 @@ func TestPipeline_ProcessRecord_ContentColumnMapping(t *testing.T) {
 			t.Errorf("Expected 'backfill halted' in error, got: %v", err)
 		}
 	})
+
+	t.Run("Tombstone record purges existing vector from DuckDB", func(t *testing.T) {
+		pipeline, duckDB, _ := setupTestPipeline(t, "message")
+
+		// 1. Ingest clean record first
+		meta := map[string]any{"id": "301", "message": "Record to be deleted soon"}
+		metaBytes, _ := json.Marshal(meta)
+		rec := RawRecord{
+			ID:       "301",
+			Table:    "tickets",
+			Content:  "Record to be deleted soon",
+			Metadata: string(metaBytes),
+		}
+		if err := pipeline.processRecord(ctx, rec); err != nil {
+			t.Fatalf("Failed to ingest record: %v", err)
+		}
+
+		duckSchema := []config.ColumnDef{
+			{Column: "id", Type: "VARCHAR"},
+			{Column: "content", Type: "VARCHAR"},
+			{Column: "metadata", Type: "JSON"},
+			{Column: "_is_tainted", Type: "BOOLEAN"},
+		}
+
+		// Verify row is present
+		rows, err := duckDB.QueryAllClean(ctx, "tickets", duckSchema)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("Expected 1 row before deletion, got %d (err: %v)", len(rows), err)
+		}
+
+		// 2. Deliver tombstone record
+		tombstone := RawRecord{
+			ID:        "301",
+			Table:     "tickets",
+			IsDeleted: true,
+		}
+		if err := pipeline.processRecord(ctx, tombstone); err != nil {
+			t.Fatalf("Failed to process tombstone: %v", err)
+		}
+
+		// Verify row is purged from DuckDB
+		rowsAfter, err := duckDB.QueryAllClean(ctx, "tickets", duckSchema)
+		if err != nil {
+			t.Fatalf("QueryAllClean failed: %v", err)
+		}
+		if len(rowsAfter) != 0 {
+			t.Fatalf("Expected 0 rows after tombstone deletion, got %d (vector was not purged!)", len(rowsAfter))
+		}
+	})
 }

@@ -124,5 +124,6 @@ However, an in-depth semantic audit identified **critical architectural misalign
 | **P1-3** | Error propagation & resilient backfill checkpointing | `internal/ingestion/pipeline.go` | **Critical** | **Completed (`fix/gringo-audit-remediation`)** |
 | **P1-4** | DuckDB Primary Key constraint & Idempotent Upsert | `internal/engine/duckdb.go` | **Critical** | **Completed (`fix/gringo-audit-remediation`)** |
 | **P1-5** | MCP `initialize` & `notifications/initialized` handshake | `internal/server/mcp.go` | **Critical** | **Completed (`fix/gringo-audit-remediation`)** |
-| **P2-1** | Optional Bearer auth interceptor for gRPC plane | `internal/server/grpc.go` | Medium | Planned |
-| **P2-2** | Transparent positioning & heuristic disclaimer in docs | `README.md` & `README.pt-BR.md` | Medium | **Completed** |
+| **P2-1** | Bearer & API Key auth interceptor for gRPC plane | `internal/server/grpc.go` | Medium | **Completed (`fix/gringo-audit-remediation`)** |
+| **P2-2** | PII Vault 128-bit entropy & CDC delete propagation | `vault.go`, `duckdb.go`, `pipeline.go` | Medium | **Completed (`fix/gringo-audit-remediation`)** |
+| **P2-3** | Transparent positioning & heuristic disclaimer in docs | `README.md` & `README.pt-BR.md` | Medium | **Completed** |

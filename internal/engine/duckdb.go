@@ -154,6 +154,20 @@ func (e *DuckDBEngine) InsertBatch(ctx context.Context, tableName string, schema
 	return tx.Commit()
 }
 
+// DeleteRecord purges a record from the DuckDB vector cache by its primary key.
+func (e *DuckDBEngine) DeleteRecord(ctx context.Context, tableName string, pkColumn string, id any) error {
+	if pkColumn == "" {
+		pkColumn = "id"
+	}
+
+	// #nosec G201 -- Identifier structure validated by manifest parser regex allowlist
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", tableName, pkColumn)
+	if _, err := e.db.ExecContext(ctx, query, id); err != nil {
+		return fmt.Errorf("failed to delete record %v from table %s: %w", id, tableName, err)
+	}
+	return nil
+}
+
 func (e *DuckDBEngine) QueryVector(ctx context.Context, tableName string, schema []config.ColumnDef, vectorCol string, queryVector []float32, limit int) ([]map[string]any, error) {
 	var colsBuilder strings.Builder
 	for _, col := range schema {

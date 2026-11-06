@@ -59,6 +59,16 @@ func (p *PostgresAdapter) Watch(ctx context.Context, events chan<- RawRecord) er
 			recordID := notification.Extra
 			record, err := p.fetchRecordDynamic(ctx, recordID)
 			if err != nil {
+				// If record is not found in Postgres, it indicates the record was DELETED!
+				if strings.Contains(err.Error(), "not found") {
+					log.Printf("🗑️ [Postgres Adapter] Record %s deleted in PostgreSQL; propagating tombstone to vector cache.", recordID)
+					events <- RawRecord{
+						ID:        recordID,
+						Table:     p.tableName,
+						IsDeleted: true,
+					}
+					continue
+				}
 				log.Printf("❌ [Postgres Adapter] Failed to fetch record %s: %v", recordID, err)
 				continue
 			}

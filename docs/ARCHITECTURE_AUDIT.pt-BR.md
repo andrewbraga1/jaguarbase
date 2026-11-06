@@ -123,5 +123,6 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 | **P1-3** | Propagação de erros e checkpoint resiliente no backfill | `internal/ingestion/pipeline.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
 | **P1-4** | Primary Key e Upsert transacional no DuckDB | `internal/engine/duckdb.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
 | **P1-5** | Handshake de inicialização do protocolo MCP | `internal/server/mcp.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
-| **P2-1** | Interceptor de autenticação opcional no gRPC | `internal/server/grpc.go` | Médio | Planejado |
-| **P2-2** | Documentação e testes de regressão dos fluxos reais | `README.md` & `README.pt-BR.md` | Médio | **Concluído** |
+| **P2-1** | Interceptor de autenticação Bearer & API Key no gRPC | `internal/server/grpc.go` | Médio | **Concluído (`fix/gringo-audit-remediation`)** |
+| **P2-2** | Entropia 128-bit do Vault e propagação de Deletes CDC | `vault.go`, `duckdb.go`, `pipeline.go` | Médio | **Concluído (`fix/gringo-audit-remediation`)** |
+| **P2-3** | Documentação e testes de regressão dos fluxos reais | `README.md` & `README.pt-BR.md` | Médio | **Concluído** |
