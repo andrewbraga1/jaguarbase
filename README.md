@@ -4,14 +4,14 @@
 
 ![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go)
 ![DuckDB](https://img.shields.io/badge/DuckDB-Embedded-FFF000?style=flat)
-![Status](https://img.shields.io/badge/Status-Production_Ready-success)
+![Status](https://img.shields.io/badge/Status-Beta_/_v1.0.0-orange)
 ![AppSec](https://img.shields.io/badge/AppSec-Zero_CVEs-brightgreen)
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
-**A Zero-Trust, High-Performance Agnostic Vector Engine in Go (SIMD-accelerated via DuckDB C++)**
+**An Open-Source High-Performance Edge Vector Cache for PostgreSQL in Go & DuckDB (SIMD-Accelerated)**
 
-JaguarBase is a highly decoupled, event-driven infrastructure appliance designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a secure, high-performance bridge between your transactional databases (e.g., PostgreSQL, MySQL, Kafka streams) and your AI context window, ensuring that sensitive PII is deterministically tokenized **at rest** and poisoned data is quarantined and isolated from semantic retrieval, guaranteeing an untainted context window for your LLM.
+JaguarBase is an event-driven edge vector cache designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a decoupled bridge between your primary transactional database (PostgreSQL) and your AI context window, offloading compute-intensive vector similarity search to an embedded DuckDB engine while applying stateful PII pseudonymization and heuristic prompt-injection filtering.
 
 ---
 
@@ -20,47 +20,50 @@ JaguarBase is a highly decoupled, event-driven infrastructure appliance designed
 Traditional architectures force AI Agents to perform computationally heavy vector math directly on the primary relational database (e.g., PostgreSQL with `pgvector`), spiking CPU usage and risking the stability of core business systems.
 
 **JaguarBase flips the paradigm using CQRS (Command Query Responsibility Segregation):**
-1. **System of Record:** Keep your data safely in your primary transactional database.
-2. **Event-Driven Sync:** JaguarBase ingests data via event-driven adapters (e.g., PostgreSQL `LISTEN/NOTIFY`, CDC webhooks, or Kafka streams) and asynchronously pulls/vectorizes records into its local DuckDB engine without slowing down your transactional DB.
+1. **System of Record:** Keep your operational data safe in your primary transactional database.
+2. **Event-Driven Sync:** JaguarBase receives change events (via PostgreSQL `LISTEN/NOTIFY`) and asynchronously embeds records into an embedded DuckDB instance.
 3. **Inference at the Edge:** AI Agents query the JaguarBase local cache in milliseconds.
-4. **Result:** Zero network latency for the AI, and absolute zero CPU impact on your primary databases.
+4. **Result:** Sub-millisecond local query plane and dramatic reduction of CPU overhead on your primary database.
 
 ```mermaid
 graph TD
-    Source[(System of Record\nPostgreSQL, MySQL, Kafka...)] -- 1. Event-Driven Sync --> JB{JaguarBase\nEdge Cache}
+    Source[(PostgreSQL\nSystem of Record)] -- 1. Event-Driven Sync --> JB{JaguarBase\nEdge Cache}
     JB -- 2. gRPC Plane\n(Sub-10ms) --> Backend[Backend Microservices]
-    JB -- 3. MCP Plane\n(JSON-RPC 2.0) --> AI[AI Agents\nClaude, Cursor, Qwen]
+    JB -- 3. MCP Plane\n(JSON-RPC 2.0) --> AI[AI Agents\nClaude, Cursor, Local LLMs]
     style JB fill:#f9a03f,stroke:#333,stroke-width:2px,color:#000
     style Source fill:#336791,stroke:#fff,color:#fff
 ```
 
 ## 🚀 Key Features (The Edge AI Appliance)
 
-- **100% Manifest-Driven Architecture:** Configured strictly via `jaguardb.yaml`. You define the schema, JaguarBase adapts dynamically. No hardcoded structs. It uses `virtual: true` definitions to seamlessly decouple raw transactional columns from the enriched RAG vector schema.
-- **In-Process Vector Storage:** Powered by DuckDB + VSS. No external database networks. Extremely fast C++ SIMD vector math inside a Go wrapper.
-- **Zero-Trust Governance:** Built-in PII masking and HMAC Handoff Proofs. Corrupted or malicious prompts are flagged (`_is_tainted`) during ingestion and excluded at the engine level (`WHERE _is_tainted=false`), protecting the AI's context window.
+- **100% Manifest-Driven Architecture:** Configured strictly via `jaguardb.yaml`. You define the schema, JaguarBase adapts dynamically without hardcoded Go structs, decoupling transactional columns from the vector representation.
+- **In-Process Vector Storage:** Powered by DuckDB C++ with SIMD-accelerated exact cosine distance (`array_cosine_distance`) inside a Go wrapper.
+- **Zero-Trust Governance Pipeline:**
+  - **Stateful PII Pseudonymization:** Sensitive fields are tokenized via HMAC-SHA256 (`vault_{column}_{hash}`) and cached in Redis with a 24-hour TTL, ensuring plain text is never persisted at rest in DuckDB.
+  - **Heuristic Anti-Injection:** Incoming payloads matching known evasion patterns are flagged (`_is_tainted=true`) and excluded from semantic search (`WHERE _is_tainted=false`).
+  - **HMAC Handoff Proofs:** Responses are signed with HMAC-SHA256 to ensure data tampering is detected downstream.
 - **Dual-Plane Protocol:**
-  - **High-Performance Plane (gRPC):** For backend microservices requiring sub-10ms latency.
-  - **AI Agent Plane (MCP):** JSON-RPC 2.0 via HTTP/REST for direct integration with AI Agents (Claude Desktop, Cursor, Custom LLMs).
+  - **High-Performance Plane (gRPC):** Internal low-latency plane for backend services.
+  - **AI Agent Plane (MCP / JSON-RPC 2.0):** HTTP endpoint for semantic tool calling (`tools/list`, `tools/call`).
 
 ### The Zero-Trust Pipeline Under the Hood
-Every record that enters or leaves JaguarBase passes through a rigorous, fail-closed security pipeline.
+Every record that enters or leaves JaguarBase passes through a defensive, fail-closed security pipeline:
 
 ```mermaid
 sequenceDiagram
-    participant Source as Source DB / Stream (e.g. Postgres, Kafka)
+    participant Source as PostgreSQL (System of Record)
     participant JB as JaguarBase Ingestion
     participant Gov as Zero-Trust Governance
     participant DDB as DuckDB (SIMD)
-    participant Agent as AI Agent (MCP)
+    participant Agent as AI Agent (MCP / gRPC)
 
-    Source->>JB: 1. Event Emitted (CDC / Insert)
+    Source->>JB: 1. Event Emitted (LISTEN/NOTIFY)
     JB->>Gov: 2. Process Row
-    Gov-->>Gov: 3. Tokenize PII (Redis) & Flag Injections
+    Gov-->>Gov: 3. Tokenize PII (Redis) & Scan Injections
     Gov->>DDB: 4. Store Vector (Dynamic Schema)
-    Agent->>JB: 5. Search Query via MCP (tools/call)
+    Agent->>JB: 5. Search Query (tools/call)
     JB->>DDB: 6. Semantic Search (WHERE _is_tainted=false)
-    DDB-->>JB: 7. Return Safe Results
+    DDB-->>JB: 7. Return Safe Records
     JB-->>Agent: 8. HMAC Handoff Proof + Clean JSON
 ```
 
@@ -68,12 +71,21 @@ sequenceDiagram
 
 ## 🛡️ Enterprise-Grade Security & Hardening
 
-JaguarBase has undergone rigorous AppSec auditing to ensure it meets Enterprise cloud standards:
+JaguarBase has undergone rigorous AppSec auditing to ensure a clean build and minimal attack surface:
 
-- **Distroless & Non-Root Execution:** The Docker image runs on an ultra-minimal `gcr.io/distroless/base-nossl-debian12:nonroot` base (with explicitly copied C++ runtimes for DuckDB), completely eliminating unused OS libraries, shells, and unnecessary SSL packages.
-- **Zero Vulnerabilities (Trivy & GoSec):** Continuously scanned. 0 HIGH/CRITICAL vulnerabilities in both the OS layers and Go dependencies.
-- **Cryptographic PII Tokenization:** Data anonymization uses irreversible **HMAC-SHA256** tied dynamically to schema column names (e.g., `vault_cpf_...`, `vault_api_key_...`), immune to Rainbow Table and collision attacks.
-- **Built-In API Shield:** MCP endpoints support optional Bearer Token authentication (`JAGUARBASE_API_KEY`), strict `MaxBytesReader` (128 KB) payload limits, bounded DuckDB CGO connection pools, and HTTP timeouts to prevent memory exhaustion and DoS.
+- **Distroless & Non-Root Execution:** The Docker image runs on `gcr.io/distroless/base-nossl-debian12:nonroot` with explicitly copied C++ runtime libraries (`libstdc++.so.6`, `libgcc_s.so.1`), eliminating shells, package managers, and unused OpenSSL packages.
+- **Zero Vulnerabilities (Trivy & GoSec):** 0 HIGH/CRITICAL CVEs in OS layers and Go dependencies; Clean Build (0 issues) in GoSec SAST.
+- **API Shield & Bounds Checking:** Protected with constant-time token comparison (`subtle.ConstantTimeCompare`), payload caps (`http.MaxBytesReader` 128 KB), bounded DuckDB connection pools, and strict HTTP server timeouts against Slowloris attacks.
+
+---
+
+## ⚠️ Current Stage & Known Limitations (Beta v1.0.0)
+
+To maintain absolute engineering transparency, the current release has the following design boundaries:
+* **Event Ingestion:** Relies on PostgreSQL `LISTEN/NOTIFY` and batch backfilling. Durable CDC via Postgres Logical Replication / Outbox table is on the roadmap.
+* **Cache Updates:** Current ingestion appends incoming records. Idempotent upserts (`ON CONFLICT`) and tombstone propagation for hard deletes are planned for v1.1.
+* **Vector Indexing:** Uses DuckDB's in-process SIMD-accelerated brute-force cosine distance. Approximate Nearest Neighbor (ANN/HNSW) indexing via VSS is being optimized for large-scale datasets.
+* **MCP Protocol:** Exposes JSON-RPC 2.0 `tools/list` and `tools/call`. The full `initialize` lifecycle handshake for direct Claude Desktop integration is currently in progress.
 
 ## 🛠️ Quick Start
 

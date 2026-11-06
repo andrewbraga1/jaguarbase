@@ -4,14 +4,14 @@
 
 ![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go)
 ![DuckDB](https://img.shields.io/badge/DuckDB-Embedded-FFF000?style=flat)
-![Status](https://img.shields.io/badge/Status-Production_Ready-success)
+![Status](https://img.shields.io/badge/Status-Beta_/_v1.0.0-orange)
 ![AppSec](https://img.shields.io/badge/AppSec-Zero_CVEs-brightgreen)
 ![Licença](https://img.shields.io/badge/Licen%C3%A7a-Apache_2.0-blue.svg)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
-**Um Motor Vetorial Agnóstico de Zero-Trust e Alta Performance em Go (Aceleração SIMD via DuckDB C++)**
+**Um Cache Vetorial de Borda e Alta Performance para PostgreSQL em Go & DuckDB (Acelerado por SIMD)**
 
-JaguarBase é um *appliance* de infraestrutura altamente desacoplado e orientado a eventos, projetado do zero para Agentes Autônomos de IA e Edge AI. Ele atua como uma ponte segura e de alta performance entre seus bancos de dados transacionais (ex: PostgreSQL, MySQL, streams do Kafka) e a janela de contexto da sua IA, garantindo que PII sensível seja deterministicamente anonimizada **em repouso** (Data at Rest) e que dados envenenados sejam isolados da busca semântica, garantindo uma janela de contexto permanentemente limpa para o seu LLM.
+JaguarBase é um cache vetorial na borda orientado a eventos, projetado do zero para Agentes Autônomos de IA e Edge AI. Ele atua como uma ponte desacoplada entre seu banco de dados transacional primário (PostgreSQL) e a janela de contexto da sua IA, descarregando as consultas vetoriais pesadas para um motor embarcado em DuckDB, enquanto aplica pseudonimização de PII em cofre e filtragem heurística de injeção de prompt.
 
 ---
 
@@ -20,47 +20,50 @@ JaguarBase é um *appliance* de infraestrutura altamente desacoplado e orientado
 Arquiteturas tradicionais forçam os Agentes de IA a executar cálculos vetoriais pesados diretamente no banco de dados relacional primário (ex: PostgreSQL com `pgvector`), gerando picos de uso de CPU e arriscando a estabilidade dos sistemas centrais de negócios.
 
 **O JaguarBase inverte o paradigma usando CQRS (Segregação de Responsabilidade de Comando e Consulta):**
-1. **Sistema de Registro:** Mantenha seus dados a salvo em seu banco transacional primário.
-2. **Sincronização por Eventos:** O JaguarBase ingere dados via adaptadores orientados a eventos (ex: `LISTEN/NOTIFY` do PostgreSQL, webhooks CDC, ou streams do Kafka) e vetoriza os registros assincronamente para seu motor local DuckDB, sem sobrecarregar seu banco transacional.
+1. **Sistema de Registro:** Mantenha seus dados seguros no seu banco transacional primário.
+2. **Sincronização por Eventos:** O JaguarBase recebe eventos de alteração (via PostgreSQL `LISTEN/NOTIFY`) e gera vetores assincronamente em uma instância local do DuckDB.
 3. **Inferência na Borda (Edge):** Agentes de IA consultam o cache local do JaguarBase em milissegundos.
-4. **Resultado:** Latência de rede zero para a IA, e zero impacto na CPU dos seus bancos de dados primários.
+4. **Resultado:** Plano de consulta local sub-milissegundo e redução drástica da sobrecarga de CPU no seu banco de dados primário.
 
 ```mermaid
 graph TD
-    Source[(Sistema de Registro\nPostgreSQL, MySQL, Kafka)] -- 1. Sincronização por Eventos --> JB{JaguarBase\nEdge Cache}
+    Source[(PostgreSQL\nSistema de Registro)] -- 1. Sincronização por Eventos --> JB{JaguarBase\nEdge Cache}
     JB -- 2. Plano gRPC\n(Sub-10ms) --> Backend[Microsserviços de Backend]
-    JB -- 3. Plano MCP\n(JSON-RPC 2.0) --> AI[Agentes IA\nClaude, Cursor, Qwen]
+    JB -- 3. Plano MCP\n(JSON-RPC 2.0) --> AI[Agentes IA\nClaude, Cursor, LLMs Locais]
     style JB fill:#f9a03f,stroke:#333,stroke-width:2px,color:#000
     style Source fill:#336791,stroke:#fff,color:#fff
 ```
 
 ## 🚀 Principais Funcionalidades (O Appliance Edge AI)
 
-- **Arquitetura 100% Dirigida por Manifesto:** Configurado estritamente via `jaguardb.yaml`. Você define o schema, o JaguarBase se adapta dinamicamente. Sem `structs` hardcoded. Usa definições `virtual: true` para desacoplar as colunas transacionais brutas do schema vetorial enriquecido (RAG).
-- **Armazenamento Vetorial In-Process:** Movido por DuckDB + VSS. Sem redes de banco de dados externas. Matemática vetorial SIMD em C++ extremamente rápida dentro de um wrapper Go.
-- **Governança Zero-Trust:** Anonimização (masking) de PII embutida e HMAC Handoff Proofs. Prompts corrompidos ou maliciosos são sinalizados (`_is_tainted`) durante a ingestão e excluídos em nível de motor (`WHERE _is_tainted=false`), protegendo a janela de contexto da IA.
+- **Arquitetura 100% Dirigida por Manifesto:** Configurado estritamente via `jaguardb.yaml`. Você define o schema, o JaguarBase se adapta dinamicamente sem *structs* fixos em Go, desacoplando as colunas transacionais do schema vetorial.
+- **Armazenamento Vetorial In-Process:** Movido por DuckDB C++ com distância de cosseno exata acelerada por SIMD (`array_cosine_distance`) dentro de um wrapper Go.
+- **Pipeline de Governança Zero-Trust:**
+  - **Pseudonimização com Cofre Redis:** Campos sensíveis são tokenizados via HMAC-SHA256 (`vault_{coluna}_{hash}`) e armazenados temporariamente no Redis com TTL de 24 horas, garantindo que o texto original não persista em repouso no DuckDB.
+  - **Filtro Heurístico Anti-Injeção:** Registros contendo padrões de evasão conhecidos são sinalizados (`_is_tainted=true`) durante a ingestão e excluídos da busca semântica (`WHERE _is_tainted=false`).
+  - **HMAC Handoff Proofs:** Respostas são assinadas com HMAC-SHA256 para detecção de adulteração downstream.
 - **Protocolo de Plano Duplo:**
-  - **Plano de Alta Performance (gRPC):** Para microsserviços de backend que exigem latência sub-10ms.
-  - **Plano de Agentes IA (MCP):** JSON-RPC 2.0 via HTTP/REST para integração direta com Agentes de IA (Claude Desktop, Cursor, LLMs Customizados).
+  - **Plano de Alta Performance (gRPC):** Plano interno de baixa latência para microsserviços.
+  - **Plano de Agentes IA (MCP / JSON-RPC 2.0):** Endpoint HTTP para chamadas semânticas de ferramentas (`tools/list`, `tools/call`).
 
 ### O Pipeline Zero-Trust por Baixo do Capô
-Todo registro que entra ou sai do JaguarBase passa por um pipeline de segurança rigoroso e seguro por padrão (fail-closed).
+Todo registro que entra ou sai do JaguarBase passa por um pipeline defensivo e seguro por padrão (fail-closed):
 
 ```mermaid
 sequenceDiagram
-    participant Source as Fonte (Postgres, Kafka)
+    participant Source as PostgreSQL (Sistema de Registro)
     participant JB as Ingestão JaguarBase
     participant Gov as Governança Zero-Trust
     participant DDB as DuckDB (SIMD)
-    participant Agent as Agente IA (MCP)
+    participant Agent as Agente IA (MCP / gRPC)
 
-    Source->>JB: 1. Evento Emitido (CDC / Insert)
+    Source->>JB: 1. Evento Emitido (LISTEN/NOTIFY)
     JB->>Gov: 2. Processar Linha
-    Gov-->>Gov: 3. Anonimizar PII (Redis) & Identificar Injeções
+    Gov-->>Gov: 3. Pseudonimizar PII (Redis) & Varrer Injeções
     Gov->>DDB: 4. Armazenar Vetor (Schema Dinâmico)
     Agent->>JB: 5. Consulta via MCP (tools/call)
     JB->>DDB: 6. Busca Semântica (WHERE _is_tainted=false)
-    DDB-->>JB: 7. Retornar Resultados Seguros
+    DDB-->>JB: 7. Retornar Registros Seguros
     JB-->>Agent: 8. HMAC Handoff Proof + JSON Limpo
 ```
 
@@ -68,12 +71,21 @@ sequenceDiagram
 
 ## 🛡️ Segurança de Nível Enterprise e Hardening
 
-O JaguarBase passou por auditorias rigorosas de AppSec para garantir os padrões de nuvem Enterprise:
+O JaguarBase passou por auditorias rigorosas de AppSec para garantir um build limpo e superfície de ataque mínima:
 
-- **Execução Distroless e Non-Root:** A imagem Docker roda em uma base ultra-minimalista `gcr.io/distroless/base-nossl-debian12:nonroot` (com runtimes C++ do DuckDB copiados explicitamente), eliminando bibliotecas de SO ociosas, shells e pacotes SSL desnecessários.
-- **Zero Vulnerabilidades (Trivy e GoSec):** Verificação contínua. 0 vulnerabilidades ALTA/CRÍTICA nas camadas de SO e nas dependências Go.
-- **Anonimização Criptográfica de PII:** O processo utiliza **HMAC-SHA256** irreversível vinculado dinamicamente aos nomes das colunas (ex: `vault_cpf_...`, `vault_api_key_...`), imune a ataques de Rainbow Table e colisão.
-- **API Shield Embutido:** Endpoints MCP suportam autenticação Bearer Token opcional (`JAGUARBASE_API_KEY`), limites estritos de payload `MaxBytesReader` (128 KB), pool de conexões DuckDB CGO limitados e timeouts HTTP para prevenir exaustão de memória e DoS.
+- **Execução Distroless e Non-Root:** A imagem Docker roda na base `gcr.io/distroless/base-nossl-debian12:nonroot` com bibliotecas de runtime C++ copiadas explicitamente (`libstdc++.so.6`, `libgcc_s.so.1`), eliminando shells, gerenciadores de pacotes e pacotes OpenSSL desnecessários.
+- **Zero Vulnerabilidades (Trivy e GoSec):** 0 CVEs de nível ALTO/CRÍTICO nas camadas de SO e dependências Go; Clean Build (0 issues) no SAST do GoSec.
+- **API Shield e Checagem de Limites:** Autenticação em tempo constante (`subtle.ConstantTimeCompare`), limites estritos de payload (`http.MaxBytesReader` 128 KB), pool de conexões DuckDB limitado e timeouts HTTP contra ataques Slowloris.
+
+---
+
+## ⚠️ Estágio Atual e Limitações Conhecidas (Beta v1.0.0)
+
+Para manter total transparência e rigor de engenharia, a versão atual possui os seguintes limites de design:
+* **Ingestão de Eventos:** Baseada em PostgreSQL `LISTEN/NOTIFY` e carga inicial sequencial. Captura durável via Replicação Lógica / tabela Outbox está no roadmap.
+* **Atualizações de Cache:** A ingestão atual realiza *append* dos registros. Upserts idempotentes (`ON CONFLICT`) e propagação de remoções (tombstones) estão planejados para a v1.1.
+* **Indexação Vetorial:** Utiliza cálculo exato por força bruta acelerado por SIMD no DuckDB. Índices aproximados (ANN/HNSW) via extensão VSS estão sendo otimizados para grandes volumes de dados.
+* **Protocolo MCP:** Expõe JSON-RPC 2.0 compatível com chamadas de ferramenta (`tools/list` e `tools/call`). O handshake completo do ciclo de vida (`initialize`) para integração nativa direta com Claude Desktop está em desenvolvimento.
 
 ## 🛠️ Início Rápido
 
