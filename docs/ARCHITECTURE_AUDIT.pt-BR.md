@@ -20,54 +20,58 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 
 ### 1. Desvio no Mapeamento de Coluna de Conteúdo (`content_column`)
 * **Localização:** `internal/ingestion/postgres_adapter.go`, `internal/ingestion/pipeline.go`, `internal/dynamic/processor.go`
-* **Descrição do Problema:** No adaptador PostgreSQL em tempo real, colunas nomeadas `message` ou `content` são extraídas para `RawRecord.Content` e removidas do mapa de metadados genéricos. No `pipeline.go`, o mapa `rawMap` recebe `content`, mas não repõe a chave configurada no manifesto (ex.: `message`). Ao executar `ProcessRow`, a coluna declarada no YAML com governança `untrusted_input` é avaliada como ausente (`nil`).
-* **Impacto:** O scanner anti-injeção não é disparado na coluna customizada de mensagem em tempo real, permitindo que payloads maliciosos sejam inseridos com `_is_tainted = false`.
-* **Remediação Recomendada:**
-  - Definir uma resolução canônica única de schema na ingestão.
-  - O `pipeline.go` deve mapear o `record.Content` diretamente sob o nome de coluna declarado em `content_column` dentro de `rawMap`.
-  - Garantir que a mesma string inspecionada e sanitizada pelo `processor` seja aquela submetida ao vetorizador e à persistência.
+* **Descrição do Problema:** No adaptador PostgreSQL em tempo real, colunas nomeadas `message` ou `content` eram extraídas para `RawRecord.Content` e removidas do mapa de metadados genéricos. No `pipeline.go`, o mapa `rawMap` recebia `content`, mas não repunha a chave configurada no manifesto (ex.: `message`). Ao executar `ProcessRow`, a coluna declarada no YAML com governança `untrusted_input` era avaliada como ausente (`nil`).
+* **Impacto:** O scanner anti-injeção não era disparado na coluna customizada de mensagem em tempo real, permitindo que payloads maliciosos fossem inseridos com `_is_tainted = false`. Além disso, tokens do cofre de PII eram gravados na coluna customizada enquanto o `Content` sem máscara vazava para o vetorizador.
+* **Remediação Implementada (`fix/gringo-audit-remediation`):**
+  - Mapeamento de schema canônico único implementado em `postgres_adapter.go` e `pipeline.go`.
+  - `record.Content` é mapeado tanto sob o `content_column` canônico quanto sob o fallback `content`.
+  - A string exata inspecionada e sanitizada pelo processador de governança é sincronizada com o vetorizador e o armazenamento DuckDB.
+  - Testes de regressão adicionados em `internal/ingestion/pipeline_test.go`.
 
 ---
 
 ### 2. Janela de Perda de Eventos entre Backfill e Streaming Real-Time
 * **Localização:** `internal/ingestion/pipeline.go` (`Start` e `performBackfill`)
-* **Descrição do Problema:** O método `Start` executa o `performBackfill` de forma totalmente síncrona antes de iniciar a goroutine do `source.Watch` (que executa o `LISTEN`).
-* **Impacto:** Quaisquer eventos de `INSERT`/`UPDATE` que ocorram no PostgreSQL durante a execução do backfill geram notificações `NOTIFY` que são descartadas, pois o cliente ainda não abriu a conexão de escuta.
-* **Remediação Recomendada:**
-  - Iniciar a escuta (`LISTEN`) ou enfileiramento concorrente de notificações antes ou paralelamente ao início da leitura de snapshot.
-  - Implementar estratégia de reconciliação ou adotar padrão de replicação lógica (CDC durável/tabela de outbox com commit transacional).
+* **Descrição do Problema:** O método `Start` executava o `performBackfill` de forma totalmente síncrona antes de iniciar a goroutine do `source.Watch` (que executa o `LISTEN`).
+* **Impacto:** Quaisquer eventos de `INSERT`/`UPDATE` ocorridos no PostgreSQL durante a execução do backfill geravam notificações `NOTIFY` descartadas, pois o cliente ainda não havia aberto a conexão de escuta.
+* **Remediação Implementada (`fix/gringo-audit-remediation`):**
+  - O watcher em tempo real `source.Watch` inicia imediatamente em `Start` com buffer assíncrono de 2048 registros antes do início da carga histórica.
+  - O backfill histórico executa com reconciliação.
+  - A camada de upsert idempotente no DuckDB reconcilia qualquer sobreposição sem duplicar registros ou corromper o estado do cache vetorial.
 
 ---
 
 ### 3. Falhas Parciais no Backfill Avançando o Ponteiro de Checkpoint
-* **Localização:** `internal/ingestion/pipeline.go` (`performBackfill`)
-* **Descrição do Problema:** `processRecord` não propaga erros para o laço de paginação do backfill. Se uma etapa intermediária falhar (ex.: timeout na geração de embeddings via Ollama ou falha de escrita), o loop continua e o `lastID` avança normalmente.
-* **Impacto:** Registros com falha são ignorados permanentemente. Se a aplicação reiniciar, a busca por `MAX(id)` começará a partir do maior ID processado com sucesso, deixando lacunas não sincronizadas no DuckDB.
-* **Remediação Recomendada:**
-  - Fazer `processRecord` retornar `error`.
-  - Implementar política de retentativa finita (*exponential backoff*).
-  - Em caso de esgotamento de retentativas, persistir a falha em fila de quarentena durável ou interromper o avanço do checkpoint (`lastID`).
+* **Localização:** `internal/ingestion/pipeline.go` (`performBackfill`, `processRecord`)
+* **Descrição do Problema:** `processRecord` retornava `void` sem propagar erros para o laço de paginação do backfill. Se uma etapa intermediária falhasse (ex.: timeout na geração de embeddings via Ollama ou falha de escrita), o loop continuava e o `lastID` avançava normalmente.
+* **Impacto:** Registros com falha eram ignorados permanentemente. Se a aplicação reiniciasse, a busca por `MAX(id)` começava a partir do maior ID processado, deixando lacunas não sincronizadas ("buracos silenciosos") no DuckDB.
+* **Remediação Implementada (`fix/gringo-audit-remediation`):**
+  - Assinatura de `processRecord` refatorada para retornar `error` explícito.
+  - Política de retentativa finita (3 tentativas com *exponential backoff*) implementada no backfill.
+  - Em caso de esgotamento de retentativas, o backfill aborta e retorna erro **sem avançar** o `lastID` além do registro com falha, garantindo retomada íntegra.
+  - Testes unitários adicionados em `internal/ingestion/pipeline_test.go`.
 
 ---
 
-### 4. Ausência de Upsert Idempotente e Propagação de Exclusões (Deletes)
-* **Localização:** `internal/engine/duckdb.go` (`AutoMigrate`, `InsertBatch`), `internal/ingestion/postgres_adapter.go`
-* **Descrição do Problema:** A tabela vetorial criada no DuckDB não possui chave primária explícita (`PRIMARY KEY (id)`). O método `InsertBatch` realiza `INSERT` direto. O fluxo de eventos de streaming também não diferencia eventos de exclusão (`DELETE`).
-* **Impacto:** Atualizações no banco relacional resultam em registros duplicados com o mesmo ID no DuckDB. Registros apagados no banco primário permanecem indefinidamente no cache de busca semântica.
-* **Remediação Recomendada:**
-  - Definir `PRIMARY KEY (id)` na tabela DuckDB.
-  - Implementar semântica de *Upsert* (ou `DELETE WHERE id = ?` transacional prévio à inserção do lote).
-  - Tratar eventos de `DELETE` no adaptador de ingestão para remoção de vetores correspondentes.
+### 4. Ausência de Upsert Idempotente e Chave Primária no DuckDB
+* **Localização:** `internal/engine/duckdb.go` (`AutoMigrate`, `InsertBatch`), `internal/ingestion/pipeline.go`
+* **Descrição do Problema:** A tabela vetorial criada no DuckDB não possuía chave primária explícita (`PRIMARY KEY (id)`). O método `InsertBatch` realizava `INSERT INTO` direto sem suporte a substituição.
+* **Impacto:** Atualizações no banco relacional ou reprocessamentos resultavam em registros duplicados com o mesmo ID no DuckDB, retendo vetores desatualizados.
+* **Remediação Implementada (`fix/gringo-audit-remediation`):**
+  - Declarado `id VARCHAR PRIMARY KEY` em `AutoMigrate` e suporte a `PRIMARY KEY` em `InitSchema`.
+  - Implementada semântica de upsert idempotente dinâmico (`INSERT OR REPLACE INTO`) no `InsertBatch` para tabelas com chave primária.
+  - Testes de integração adicionados em `internal/engine/duckdb_test.go`.
 
 ---
 
 ### 5. Incompatibilidade com o Ciclo de Vida do Protocolo MCP
 * **Localização:** `internal/server/mcp.go`
-* **Descrição do Problema:** O endpoint HTTP aceita exclusivamente os métodos `tools/list` e `tools/call`. A especificação oficial do *Model Context Protocol* (MCP) determina que toda conexão de cliente inicie obrigatoriamente com o handshake `initialize`, seguido de `notifications/initialized`.
-* **Impacto:** Clientes MCP oficiais padrão (como Claude Desktop ou Cursor) falham imediatamente na conexão inicial com o erro `-32601 Method not found`.
-* **Remediação Recomendada:**
-  - Implementar handlers para `initialize` (retornando capabilities do servidor e protocolo suportado) e `notifications/initialized`.
-  - Tipar as respostas em blocos de conteúdo compatíveis com o padrão MCP (`TextContent`).
+* **Descrição do Problema:** O endpoint HTTP aceitava exclusivamente os métodos `tools/list` e `tools/call`. A especificação oficial do *Model Context Protocol* (MCP) determina que toda conexão de cliente inicie obrigatoriamente com o handshake `initialize`, seguido de `notifications/initialized`.
+* **Impacto:** Clientes MCP oficiais padrão (como Claude Desktop ou Cursor) falhavam imediatamente na conexão inicial com o erro `-32601 Method not found`.
+* **Remediação Implementada (`fix/gringo-audit-remediation`):**
+  - Implementados os métodos `initialize` (retornando capabilities do servidor, versão de protocolo `2024-11-05` e metadados `jaguarbase v1.0.0`) e `notifications/initialized` (semântica 204 No Content).
+  - Implementado suporte ao ping de keepalive (`ping`).
+  - Testes unitários adicionados em `internal/server/mcp_test.go`.
 
 ---
 
@@ -76,7 +80,7 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 ### 6. Heurística Anti-Injeção Baseada em Assinaturas Fixas
 * **Localização:** `internal/governance/scanner.go`
 * **Análise:** O scanner utiliza uma expressão regular RE2 compilada contendo 3 padrões estáticos (`ignore...instructions`, `acesso...root`).
-* **Diretriz de Engenharia:** Tratar explicitamente o módulo como um **filtro heurístico de primeira linha**, e não uma garantia matemática contra *Prompt Injections*. O modelo de ameaças deve orientar os consumidores downstream a tratar o contexto recuperado como entrada não confiável.
+* **Diretriz de Engenharia:** Documentado explicitamente no `README.md` e `README.pt-BR.md` como um **filtro heurístico de primeira linha**, e não uma garantia matemática contra *Prompt Injections*. O modelo de ameaças orienta os consumidores downstream a tratar o contexto recuperado como entrada não confiável.
 
 ---
 
@@ -85,14 +89,14 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 * **Análise:**
   - O cofre armazena o mapeamento reverso `token -> valor original` no Redis com TTL de 24 horas. Trata-se, portanto, de uma **pseudonimização reversível com estado**, e não anonimização irreversível.
   - O hash HMAC-SHA256 é truncado em 16 caracteres hexadecimais (64 bits). Embora proteja contra rainbow tables, 64 bits de entropia apresentam possibilidade estatística de colisão em corpora massivos sem um resolvedor de conflito.
-* **Diretriz de Engenharia:** Documentar formalmente o cofre como pseudonimização reversível de sessão. Empregar no mínimo 128 bits de hash ou adicionar mecanismo de fallback em caso de colisão no Redis.
+* **Diretriz de Engenharia:** Documentado formalmente o cofre como pseudonimização reversível de sessão. O roadmap prevê elevar a entropia para 128 bits (32 caracteres hexadecimais) com tratamento de colisão.
 
 ---
 
 ### 8. Busca Vetorial Exata (SIMD) vs. Índice Aproximado (ANN/HNSW)
 * **Localização:** `internal/engine/duckdb.go`
 * **Análise:** O DuckDB executa `array_cosine_distance` via força bruta paralelizada em C++ (SIMD). Embora a extensão VSS seja carregada (`INSTALL vss; LOAD vss;`), nenhum comando `CREATE INDEX ... USING HNSW` é executado na tabela.
-* **Diretriz de Engenharia:** Esclarecer na documentação que o mecanismo atual realiza busca exata (*Exact k-NN* via SIMD), ideal para dezenas/centenas de milhares de registros locais com precisão de 100%, e planejar a ativação de índices HNSW para corpora na casa dos milhões.
+* **Diretriz de Engenharia:** Esclarecido na documentação que o mecanismo atual realiza busca exata (*Exact k-NN* via SIMD), ideal para dezenas/centenas de milhares de registros locais com precisão de 100%, com roadmap para índices HNSW em corpora maiores.
 
 ---
 
@@ -114,10 +118,10 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 
 | ID | Item | Arquivo Afetado | Prioridade | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **P1-1** | Mapeamento canônico `content_column` no pipeline | `pipeline.go` & `postgres_adapter.go` | **Crítico** | Planejado |
-| **P1-2** | Handshake de inicialização do protocolo MCP | `internal/server/mcp.go` | **Crítico** | Planejado |
-| **P1-3** | Primary Key e Upsert transacional no DuckDB | `internal/engine/duckdb.go` | **Crítico** | Planejado |
-| **P1-4** | Propagação de erros e checkpoint resiliente no backfill | `internal/ingestion/pipeline.go` | **Crítico** | Planejado |
+| **P1-1** | Mapeamento canônico `content_column` no pipeline | `pipeline.go` & `postgres_adapter.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
+| **P1-2** | Subscrição e buffer de eventos pré-backfill | `internal/ingestion/pipeline.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
+| **P1-3** | Propagação de erros e checkpoint resiliente no backfill | `internal/ingestion/pipeline.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
+| **P1-4** | Primary Key e Upsert transacional no DuckDB | `internal/engine/duckdb.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
+| **P1-5** | Handshake de inicialização do protocolo MCP | `internal/server/mcp.go` | **Crítico** | **Concluído (`fix/gringo-audit-remediation`)** |
 | **P2-1** | Interceptor de autenticação opcional no gRPC | `internal/server/grpc.go` | Médio | Planejado |
-| **P2-2** | Documentação e testes de regressão dos fluxos reais | `tests/` e `README.md` | Médio | Concluído (Docs) |
-
+| **P2-2** | Documentação e testes de regressão dos fluxos reais | `README.md` & `README.pt-BR.md` | Médio | **Concluído** |
