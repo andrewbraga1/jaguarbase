@@ -41,9 +41,11 @@ func (m *mockEmbedder) Generate(ctx context.Context, text string, model string) 
 
 type mockSource struct {
 	batchRecords []map[string]any
+	lastFetchID  int
 }
 
 func (m *mockSource) FetchBatch(ctx context.Context, tableName string, columns []string, pkColumn string, lastID int, limit int) ([]map[string]any, error) {
+	m.lastFetchID = lastID
 	res := m.batchRecords
 	m.batchRecords = nil // return once
 	return res, nil
@@ -312,6 +314,74 @@ func TestPipeline_ProcessRecord_ContentColumnMapping(t *testing.T) {
 		}
 		if len(rowsAfter) != 0 {
 			t.Fatalf("Expected 0 rows after tombstone deletion, got %d (vector was not purged!)", len(rowsAfter))
+		}
+	})
+
+	t.Run("Fail-Closed: Rejects record when content column is missing from governance output", func(t *testing.T) {
+		pipeline, _, embedder := setupTestPipeline(t, "message")
+		embedder.lastTextEmbedded = ""
+
+		// Missing 'message' column in record metadata
+		meta := map[string]any{"id": "401", "other_col": "some data"}
+		metaBytes, _ := json.Marshal(meta)
+		rec := RawRecord{
+			ID:       "401",
+			Table:    "tickets",
+			Content:  "", // empty content and missing in metadata
+			Metadata: string(metaBytes),
+		}
+
+		err := pipeline.processRecord(ctx, rec)
+		if err == nil {
+			t.Fatalf("Expected Fail-Closed error when content is missing, got nil")
+		}
+		if embedder.lastTextEmbedded != "" {
+			t.Fatalf("Security Violation: Embedder was called on fail-closed record! Text: %s", embedder.lastTextEmbedded)
+		}
+	})
+
+	t.Run("Backfill resumes from isolated checkpoint ignoring higher real-time IDs", func(t *testing.T) {
+		pipeline, duckDB, _ := setupTestPipeline(t, "message")
+
+		// 1. Simulate a real-time event with a high ID (1000) stored in DuckDB
+		highMeta := map[string]any{"id": "1000", "message": "High ID real-time message"}
+		highBytes, _ := json.Marshal(highMeta)
+		if err := pipeline.processRecord(ctx, RawRecord{
+			ID:       "1000",
+			Table:    "tickets",
+			Content:  "High ID real-time message",
+			Metadata: string(highBytes),
+		}); err != nil {
+			t.Fatalf("Failed to insert high ID record: %v", err)
+		}
+
+		// 2. Set backfill checkpoint to 20 in isolated metadata store
+		if err := duckDB.SetCheckpoint(ctx, "backfill_checkpoint_tickets", 20); err != nil {
+			t.Fatalf("Failed to set checkpoint: %v", err)
+		}
+
+		// 3. Setup mock source returning records from 21
+		source := &mockSource{
+			batchRecords: []map[string]any{
+				{"id": 21, "message": "Record 21", "customer_cpf": "111"},
+			},
+		}
+		pipeline.source = source
+
+		// 4. Run backfill
+		if err := pipeline.performBackfill(ctx); err != nil {
+			t.Fatalf("Backfill failed: %v", err)
+		}
+
+		// 5. Verify FetchBatch was called with lastID = 20, NOT 1000!
+		if source.lastFetchID != 20 {
+			t.Fatalf("Expected FetchBatch to resume from checkpoint 20, but it resumed from %d (skipping records!)", source.lastFetchID)
+		}
+
+		// 6. Verify checkpoint was updated to 21
+		newCheckpoint, err := duckDB.GetCheckpoint(ctx, "backfill_checkpoint_tickets")
+		if err != nil || newCheckpoint != 21 {
+			t.Fatalf("Expected checkpoint to advance to 21, got %d (err: %v)", newCheckpoint, err)
 		}
 	})
 }

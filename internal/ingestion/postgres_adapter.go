@@ -19,6 +19,7 @@ type PostgresAdapter struct {
 	channel   string
 	tableName string
 	listener  *pq.Listener
+	ready     chan struct{}
 }
 
 // NewPostgresAdapter initializes a new adapter.
@@ -28,7 +29,13 @@ func NewPostgresAdapter(db *sql.DB, connStr, channel, tableName string) *Postgre
 		connStr:   connStr,
 		channel:   channel,
 		tableName: tableName,
+		ready:     make(chan struct{}),
 	}
+}
+
+// Ready returns a channel that closes when the LISTEN subscription is confirmed active.
+func (p *PostgresAdapter) Ready() <-chan struct{} {
+	return p.ready
 }
 
 // Watch listens to the Postgres NOTIFY channel and fetches full records dynamically.
@@ -42,6 +49,13 @@ func (p *PostgresAdapter) Watch(ctx context.Context, events chan<- RawRecord) er
 	p.listener = pq.NewListener(p.connStr, 10*time.Second, time.Minute, reportProblem)
 	if err := p.listener.Listen(p.channel); err != nil {
 		return fmt.Errorf("failed to listen on channel %s: %w", p.channel, err)
+	}
+
+	// Confirm that the LISTEN command is active on Postgres
+	select {
+	case <-p.ready:
+	default:
+		close(p.ready)
 	}
 
 	log.Printf("🎧 Postgres Adapter: Listening for '%s' on table '%s' via LISTEN/NOTIFY...", p.channel, p.tableName)

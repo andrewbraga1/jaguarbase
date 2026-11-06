@@ -25,3 +25,9 @@ type DataSource interface {
 	// Close gracefully terminates the adapter connection.
 	Close() error
 }
+
+// ReadyNotifier is an optional interface implemented by DataSources to signal when
+// their real-time listener is fully active and confirmed subscribed to the stream.
+type ReadyNotifier interface {
+	Ready() <-chan struct{}
+}

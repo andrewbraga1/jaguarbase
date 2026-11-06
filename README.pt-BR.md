@@ -82,10 +82,10 @@ O JaguarBase passou por auditorias rigorosas de AppSec para garantir um build li
 ## ⚠️ Estágio Atual e Limitações Conhecidas (Beta v1.0.0)
 
 Para manter total transparência e rigor de engenharia, a versão atual possui os seguintes limites de design:
-* **Ingestão de Eventos:** Baseada em PostgreSQL `LISTEN/NOTIFY` e carga inicial sequencial. Captura durável via Replicação Lógica / tabela Outbox está no roadmap.
-* **Atualizações de Cache:** A ingestão atual realiza *append* dos registros. Upserts idempotentes (`ON CONFLICT`) e propagação de remoções (tombstones) estão planejados para a v1.1.
-* **Indexação Vetorial:** Utiliza cálculo exato por força bruta acelerado por SIMD no DuckDB. Índices aproximados (ANN/HNSW) via extensão VSS estão sendo otimizados para grandes volumes de dados.
-* **Protocolo MCP:** Expõe JSON-RPC 2.0 compatível com chamadas de ferramenta (`tools/list` e `tools/call`). O handshake completo do ciclo de vida (`initialize`) para integração nativa direta com Claude Desktop está em desenvolvimento.
+* **Ingestão de Eventos:** Baseada em PostgreSQL `LISTEN/NOTIFY` (com sincronização de prontidão do watcher para eliminar condições de corrida na inicialização) e carga histórica resiliente. Conectores adicionais via Replicação Lógica / tabela Outbox estão no roadmap.
+* **Atualizações de Cache:** Upserts totalmente idempotentes (`INSERT OR REPLACE`) e propagação de exclusões por tombstone implementados e validados. Checkpoints de backfill são isolados em tabela interna de metadados para evitar pulos na retomada.
+* **Indexação Vetorial:** Utiliza cálculo exato por força bruta acelerado por SIMD no DuckDB (`array_cosine_similarity`). Suporte à extensão VSS para indexação vetorial ANN/HNSW em ambientes locais e embarcados.
+* **Protocolo MCP:** Em estrita conformidade com a especificação do Model Context Protocol (versões 2024-11-05 e 2025-06-18), com handshake completo `initialize`, negociação de capabilities, ping, `tools/list` e Content Blocks tipados em `tools/call` para integração direta com Claude Desktop e clientes compatíveis com MCP.
 
 ## 🛠️ Início Rápido
 
@@ -145,8 +145,8 @@ Testado em um Intel i7 Dual-Core com 1.000 workers simultâneos processando veto
 
 **Resiliência de Hardware (Engenharia do Caos):**
 - **Load Shedding O(1):** Intercepta loops fora de controle (ex: loops infinitos do LangChain) e bloqueia as requisições (HTTP 429) na camada do Roteador Go em **< 0.5ms**.
-- **Vazamentos de Memória Zero:** Consome **< 10MB de RAM (Go Heap)** enquanto gerencia centenas de milhares de vetores.
-- **Cache de Páginas do SO:** Descarrega inteligentemente os índices vetoriais para o Buffer Cache do Kernel Linux, evitando travamentos por OOM (Out-of-Memory) no nível da aplicação.
+- **Pegada de Memória Previsível:** A camada de serviço em Go mantém uma pegada de heap enxuta (**< 10MB de RAM Go Heap**), enquanto as alocações C++ fora da heap do DuckDB embarcado são geridas pelo pool de buffers do DuckDB e descarregadas para o cache de páginas do kernel Linux, prevenindo travamentos por OOM.
+- **Cache de Páginas do SO:** Descarrega inteligentemente os índices vetoriais para o Buffer Cache do Kernel Linux, garantindo alto throughput em consultas locais sem inchaço de memória.
 
 ## 💼 Posicionamento de Mercado
 

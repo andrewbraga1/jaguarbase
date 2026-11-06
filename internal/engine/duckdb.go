@@ -348,3 +348,44 @@ func (d *DuckDBEngine) GetMaxID(ctx context.Context, tableName string, pkColumn 
 
 	return int(maxID.Int64)
 }
+
+// InitMetadata ensures internal metadata table exists for durable checkpointing.
+func (d *DuckDBEngine) InitMetadata(ctx context.Context) error {
+	query := `CREATE TABLE IF NOT EXISTS _jaguarbase_metadata (
+		key VARCHAR PRIMARY KEY,
+		value VARCHAR
+	);`
+	_, err := d.db.ExecContext(ctx, query)
+	return err
+}
+
+// GetCheckpoint retrieves an isolated ingestion checkpoint without interference from real-time events.
+func (d *DuckDBEngine) GetCheckpoint(ctx context.Context, key string) (int, error) {
+	if err := d.InitMetadata(ctx); err != nil {
+		return 0, err
+	}
+	var valStr string
+	query := `SELECT value FROM _jaguarbase_metadata WHERE key = ?`
+	err := d.db.QueryRowContext(ctx, query, key).Scan(&valStr)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var id int
+	if _, err := fmt.Sscanf(valStr, "%d", &id); err != nil {
+		return 0, nil
+	}
+	return id, nil
+}
+
+// SetCheckpoint atomically persists an ingestion checkpoint in the isolated metadata store.
+func (d *DuckDBEngine) SetCheckpoint(ctx context.Context, key string, checkpoint int) error {
+	if err := d.InitMetadata(ctx); err != nil {
+		return err
+	}
+	query := `INSERT OR REPLACE INTO _jaguarbase_metadata (key, value) VALUES (?, ?)`
+	_, err := d.db.ExecContext(ctx, query, key, fmt.Sprintf("%d", checkpoint))
+	return err
+}
