@@ -27,3 +27,9 @@ sec_audit_logs/
 
 # Extras
 .env
+
+# External AI reviews
+*revisao*.md
+*reanalise*.md
+Gringo*.md
+JaguarBase_avalia*
