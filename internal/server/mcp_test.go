@@ -62,7 +62,79 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 		return rr
 	}
 
-	// 3. Validates the required MCP 'tools/list' protocol discovery phase
+	// 3a. Validates MCP Handshake Lifecycle ('initialize')
+	t.Run("Executes initialize handshake correctly", func(t *testing.T) {
+		reqPayload := `{
+			"jsonrpc": "2.0",
+			"id": 100,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2024-11-05",
+				"capabilities": {},
+				"clientInfo": {
+					"name": "claude-desktop",
+					"version": "0.1.0"
+				}
+			}
+		}`
+
+		rec := sendRequest(reqPayload)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected 200 OK, got %d", rec.Code)
+		}
+
+		var res server.MCPResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatalf("Failed to parse initialize response: %v", err)
+		}
+
+		if res.Error != nil {
+			t.Fatalf("Unexpected error from initialize: %v", res.Error)
+		}
+
+		resultMap, ok := res.Result.(map[string]any)
+		if !ok {
+			t.Fatalf("Failed to parse initialize result map")
+		}
+
+		if resultMap["protocolVersion"] != "2024-11-05" {
+			t.Errorf("Expected protocolVersion '2024-11-05', got %v", resultMap["protocolVersion"])
+		}
+
+		serverInfo, ok := resultMap["serverInfo"].(map[string]any)
+		if !ok || serverInfo["name"] != "jaguarbase" {
+			t.Errorf("Expected serverInfo name 'jaguarbase', got %v", serverInfo)
+		}
+	})
+
+	// 3b. Validates MCP 'notifications/initialized' notification handling
+	t.Run("Handles notifications/initialized without errors", func(t *testing.T) {
+		reqPayload := `{
+			"jsonrpc": "2.0",
+			"method": "notifications/initialized"
+		}`
+
+		rec := sendRequest(reqPayload)
+		if rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+			t.Fatalf("Expected 204 No Content or 200 OK, got %d", rec.Code)
+		}
+	})
+
+	// 3c. Validates MCP 'ping' keepalive handling
+	t.Run("Handles ping keepalive", func(t *testing.T) {
+		reqPayload := `{
+			"jsonrpc": "2.0",
+			"id": 101,
+			"method": "ping"
+		}`
+
+		rec := sendRequest(reqPayload)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected 200 OK, got %d", rec.Code)
+		}
+	})
+
+	// 3d. Validates the required MCP 'tools/list' protocol discovery phase
 	t.Run("Executes tools/list correctly", func(t *testing.T) {
 		reqPayload := `{
 			"jsonrpc": "2.0",

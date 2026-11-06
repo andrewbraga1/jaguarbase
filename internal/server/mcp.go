@@ -111,6 +111,12 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 🚦 MCP Protocol Router
 	switch req.Method {
+	case "initialize":
+		s.handleInitialize(w, req)
+	case "notifications/initialized":
+		s.handleInitializedNotification(w, req)
+	case "ping":
+		s.handlePing(w, req)
 	case "tools/list":
 		s.handleToolsList(w, req)
 	case "tools/call":
@@ -118,6 +124,59 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.sendError(w, req.ID, -32601, "Method not found")
 	}
+}
+
+// handleInitialize implements the standard MCP handshake initialization
+func (s *MCPServer) handleInitialize(w http.ResponseWriter, req MCPRequest) {
+	protoVer := "2024-11-05"
+	if len(req.Params) > 0 {
+		var initParams struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if err := json.Unmarshal(req.Params, &initParams); err == nil && initParams.ProtocolVersion != "" {
+			protoVer = initParams.ProtocolVersion
+		}
+	}
+
+	res := MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result: map[string]any{
+			"protocolVersion": protoVer,
+			"capabilities": map[string]any{
+				"tools": map[string]any{},
+			},
+			"serverInfo": map[string]any{
+				"name":    "jaguarbase",
+				"version": "1.0.0",
+			},
+		},
+	}
+	s.writeJSON(w, res)
+}
+
+// handleInitializedNotification acknowledges client readiness
+func (s *MCPServer) handleInitializedNotification(w http.ResponseWriter, req MCPRequest) {
+	if req.ID == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	res := MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result:  map[string]any{},
+	}
+	s.writeJSON(w, res)
+}
+
+// handlePing handles MCP keepalive/ping
+func (s *MCPServer) handlePing(w http.ResponseWriter, req MCPRequest) {
+	res := MCPResponse{
+		Jsonrpc: "2.0",
+		ID:      req.ID,
+		Result:  map[string]any{},
+	}
+	s.writeJSON(w, res)
 }
 
 // Answer the AI Agent which tools are available in JaguarBase
