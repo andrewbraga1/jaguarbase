@@ -4,7 +4,7 @@
 # Use the official Go image based on Debian Bookworm
 FROM golang:1.23-bookworm AS builder
 
-ENV GOTOOLCHAIN=go1.26.10
+ENV GOTOOLCHAIN=go1.26.11
 
 # Install C/C++ compilers required for CGO and go-duckdb
 RUN apt-get update && apt-get install -y build-essential gcc g++

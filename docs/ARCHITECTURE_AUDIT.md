@@ -221,3 +221,9 @@ However, an in-depth semantic audit identified **critical architectural misalign
 * **Root Cause:** Transitive dependency `github.com/klauspost/compress` at `v1.18.7` (pulled by DuckDB driver) was vulnerable to panic/DoS on two-block frames in FSE decompression.
 * **Remediation Implemented:** Explicitly upgraded `github.com/klauspost/compress` to `v1.20.2` in `go.mod`, verified clean Govulncheck (0 vulnerabilities called), and confirmed full CI pass.
 
+### 27. Standard Library Zero-CVE & Concurrent MaxBytesReader Defense (GO-2026-6859 Remediation)
+* **Target Components:** `go.mod`, `Dockerfile`, `internal/server/mcp_test.go`
+* **Root Cause:** Go standard library `net/http@go1.26.10` contained a header race condition in `http.MaxBytesReader` causing server crashes under concurrent load (GO-2026-6859).
+* **Remediation Implemented:** Upgraded Go baseline from `1.26.10` to patched `1.26.11` across `go.mod`, `Dockerfile` (`ENV GOTOOLCHAIN=go1.26.11`), and expanded the test suite with `TestMCPServer_ConcurrentMaxBytesReaderRace` to validate concurrent high-volume requests under race detection.
+
+

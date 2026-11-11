@@ -219,3 +219,8 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 * **Localização:** `go.mod`, `go.sum`
 * **Remediação Implementada:** A dependência transitiva `github.com/klauspost/compress@v1.18.7` (trazida pelo driver DuckDB) possuía vulnerabilidade de pânico/DoS (GO-2026-6865). O módulo foi atualizado explicitamente para `v1.20.2` no `go.mod`, zerando os apontamentos do Govulncheck no pipeline estrito de CI.
 
+### 27. Quality Gate Zero-CVE na Biblioteca Padrão e Defesa Concorrente de MaxBytesReader (Remediação de GO-2026-6859)
+* **Localização:** `go.mod`, `Dockerfile`, `internal/server/mcp_test.go`
+* **Remediação Implementada:** A biblioteca padrão do Go (`net/http@go1.26.10`) continha vulnerabilidade de race condition em cabeçalhos sob `http.MaxBytesReader` causando crash no servidor (GO-2026-6859). A toolchain base foi atualizada de `1.26.10` para a versão corrigida `1.26.11` no `go.mod` e `Dockerfile`, e a suíte de testes foi expandida com o teste concorrente `TestMCPServer_ConcurrentMaxBytesReaderRace` sob o detector de data races (`-race`).
+
+
