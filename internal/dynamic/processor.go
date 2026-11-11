@@ -2,6 +2,7 @@ package dynamic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/andrewbraga1/jaguarbase/internal/config"
@@ -47,9 +48,14 @@ func (p *Processor) ProcessRow(ctx context.Context, row map[string]any, schema [
 
 		switch colDef.Governance {
 		case "pii_vault":
-			strVal, ok := val.(string)
-			if !ok {
-				return nil, fmt.Errorf("Fail-Closed: pii_vault requires string type for column '%s'", colDef.Column)
+			var strVal string
+			switch v := val.(type) {
+			case string:
+				strVal = v
+			case []byte:
+				strVal = string(v)
+			default:
+				return nil, fmt.Errorf("Fail-Closed: pii_vault requires string or byte slice for column '%s', got %T", colDef.Column, val)
 			}
 
 			token, err := p.vault.Tokenize(ctx, colDef.Column, strVal)
@@ -59,7 +65,23 @@ func (p *Processor) ProcessRow(ctx context.Context, row map[string]any, schema [
 			safeRow[colDef.Column] = token
 
 		case "untrusted_input":
-			if strVal, ok := val.(string); ok && p.scanner.CheckTaint(strVal) {
+			var payload string
+			switch v := val.(type) {
+			case string:
+				payload = v
+			case []byte:
+				payload = string(v)
+			case map[string]any, []any:
+				jsonBytes, err := json.Marshal(v)
+				if err != nil {
+					return nil, fmt.Errorf("Fail-Closed: failed to serialize structured untrusted_input in column '%s': %w", colDef.Column, err)
+				}
+				payload = string(jsonBytes)
+			default:
+				payload = fmt.Sprintf("%v", v)
+			}
+
+			if p.scanner.CheckTaint(payload) {
 				isTainted = true
 			}
 			safeRow[colDef.Column] = val // Keep original, but flag the entire row as tainted

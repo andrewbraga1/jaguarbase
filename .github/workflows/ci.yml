@@ -58,9 +58,12 @@ jobs:
           security:
             mcp_in_flight_limit: 2
           sources:
-            - table: "chaos_target"
+            - table: "support_tickets"
               schema:
                 - column: "id"
+                  type: "string"
+                  primary_key: true
+                - column: "content"
                   type: "string"
                   governance: "none"
           EOF
@@ -74,6 +77,9 @@ jobs:
           sleep 2
           go run cmd/chaos/runaway_loop/main.go
           kill $SERVER_PID
+
+      - name: Security Gate (Govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - name: Build Docker Image
         run: docker build -t andrewbraga1/jaguarbase:latest .

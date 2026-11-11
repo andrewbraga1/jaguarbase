@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -14,6 +15,11 @@ import (
 	"github.com/andrewbraga1/jaguarbase/internal/dynamic"
 	"github.com/andrewbraga1/jaguarbase/internal/engine"
 )
+
+// sanitizeLog strips CRLF characters from string inputs to prevent log injection vulnerabilities.
+func sanitizeLog(val string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(val, "\n", ""), "\r", "")
+}
 
 // Pipeline orchestrates the agnostic flow of data from raw sources to the vector engine,
 // enforcing Zero-Trust governance (PII masking, taint checking) at the edge.
@@ -81,7 +87,7 @@ func (p *Pipeline) Start(ctx context.Context) {
 			return
 		case record := <-events:
 			if err := p.processRecord(ctx, record); err != nil {
-				log.Printf("❌ [Real-time Ingestion Error]: Failed to process record %s: %v", record.ID, err)
+				log.Printf("❌ [Real-time Ingestion Error]: Failed to process record %s: %v", sanitizeLog(record.ID), err)
 			}
 		}
 	}
@@ -179,7 +185,7 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 				if procErr == nil {
 					break
 				}
-				log.Printf("⚠️ [Backfill Retry %d/3] Failed to process record %s: %v", attempt, record.ID, procErr)
+				log.Printf("⚠️ [Backfill Retry %d/3] Failed to process record %s: %v", attempt, sanitizeLog(record.ID), procErr)
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
@@ -190,18 +196,26 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 				return fmt.Errorf("backfill halted at record %s (lastID=%d): %w", record.ID, lastID, procErr)
 			}
 
-			// Update batchMaxID ONLY after successful processing
+			// Update batchMaxID ONLY after successful processing (with integer overflow defense)
 			if rawID, exists := rawMap[pkColumn]; exists {
 				var currentID int
 				switch v := rawID.(type) {
 				case int64:
-					currentID = int(v)
+					if v > math.MaxInt {
+						currentID = math.MaxInt
+					} else {
+						currentID = int(v)
+					}
 				case int32:
 					currentID = int(v)
 				case int:
 					currentID = v
-				case float64: // Sometimes JSON unmarshaling forces numbers to float64
-					currentID = int(v)
+				case float64:
+					if v > float64(math.MaxInt) {
+						currentID = math.MaxInt
+					} else {
+						currentID = int(v)
+					}
 				}
 				if currentID > batchMaxID {
 					batchMaxID = currentID
@@ -214,7 +228,7 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 			lastID = batchMaxID
 			if p.duckDB != nil {
 				if err := p.duckDB.SetCheckpoint(ctx, checkpointKey, lastID); err != nil {
-					log.Printf("⚠️ Failed to persist backfill checkpoint for %s (ID %d): %v", tableName, lastID, err)
+					log.Printf("⚠️ Failed to persist backfill checkpoint for %s (ID %d): %v", sanitizeLog(tableName), lastID, err)
 				}
 			}
 		}
@@ -231,7 +245,7 @@ func (p *Pipeline) performBackfill(ctx context.Context) error {
 	if p.duckDB != nil {
 		completeKey := "backfill_complete_" + tableName
 		if err := p.duckDB.SetCheckpoint(ctx, completeKey, 1); err != nil {
-			log.Printf("⚠️ Failed to mark backfill complete for %s: %v", tableName, err)
+			log.Printf("⚠️ Failed to mark backfill complete for %s: %v", sanitizeLog(tableName), err)
 		}
 	}
 
@@ -249,11 +263,11 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 
 	// 0. Handle Deletion / Tombstone event
 	if record.IsDeleted {
-		log.Printf("🗑️ [Ingestion] Purging deleted record %s from vector cache '%s'...", record.ID, targetTable)
+		log.Printf("🗑️ [Ingestion] Purging deleted record %s from vector cache '%s'...", sanitizeLog(record.ID), sanitizeLog(targetTable))
 		if err := p.duckDB.DeleteRecord(ctx, targetTable, "id", record.ID); err != nil {
 			return fmt.Errorf("failed to purge record %s from duckdb: %w", record.ID, err)
 		}
-		log.Printf("✅ [Ingestion] Successfully purged record %s from vector cache '%s'.", record.ID, targetTable)
+		log.Printf("✅ [Ingestion] Successfully purged record %s from vector cache '%s'.", sanitizeLog(record.ID), sanitizeLog(targetTable))
 		return nil
 	}
 
@@ -291,7 +305,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 
 	// Safely unmarshal the raw JSON metadata string into the generic map
 	if err := json.Unmarshal([]byte(record.Metadata), &rawMap); err != nil {
-		log.Printf("⚠️ [Ingestion Warning]: Failed to parse metadata JSON for record %s: %v", record.ID, err)
+		log.Printf("⚠️ [Ingestion Warning]: Failed to parse metadata JSON for record %s: %v", sanitizeLog(record.ID), err)
 	}
 
 	// Ensure core fields are mapped to their canonical schema definitions
@@ -307,7 +321,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 	// 3. ZERO-TRUST GOVERNANCE: Apply PII Masking and Taint Check dynamically
 	safeMap, err := p.processor.ProcessRow(ctx, rawMap, tableSchema)
 	if err != nil {
-		log.Printf("❌ [Governance Error]: Record %s rejected by Fail-Closed rules: %v", record.ID, err)
+		log.Printf("❌ [Governance Error]: Record %s rejected by Fail-Closed rules: %v", sanitizeLog(record.ID), err)
 		return fmt.Errorf("governance failure for record %s: %w", record.ID, err)
 	}
 
@@ -326,12 +340,12 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 	safeMessage := contentToVectorize
 
 	// 5. Generate Semantic Embeddings via Local LLM (Ollama)
-	cleanModel := strings.ReplaceAll(strings.ReplaceAll(llmModel, "\n", ""), "\r", "")
-	cleanID := strings.ReplaceAll(strings.ReplaceAll(record.ID, "\n", ""), "\r", "")
+	cleanModel := sanitizeLog(llmModel)
+	cleanID := sanitizeLog(record.ID)
 	log.Printf("🧠 [Ollama] Generating %s embedding for record %s...", cleanModel, cleanID)
 	vector, err := p.embedder.Generate(ctx, safeMessage, llmModel)
 	if err != nil {
-		log.Printf("❌ [Ollama Error]: Failed to generate embedding for record %s: %v", record.ID, err)
+		log.Printf("❌ [Ollama Error]: Failed to generate embedding for record %s: %v", cleanID, err)
 		return fmt.Errorf("embedding generation failed for record %s: %w", record.ID, err)
 	}
 
@@ -345,7 +359,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 
 	metadataBytes, err := json.Marshal(metadataOut)
 	if err != nil {
-		log.Printf("⚠️ [Ingestion Warning]: Failed to marshal sanitized metadata for record %s: %v", record.ID, err)
+		log.Printf("⚠️ [Ingestion Warning]: Failed to marshal sanitized metadata for record %s: %v", cleanID, err)
 		metadataBytes = []byte("{}") // Fallback to empty JSON object
 	}
 
@@ -368,7 +382,7 @@ func (p *Pipeline) processRecord(ctx context.Context, record RawRecord) error {
 
 	// 8. Commit to Vector Storage (DuckDB with idempotent upsert)
 	if err := p.duckDB.InsertBatch(ctx, targetTable, targetSchemaDef, []map[string]any{finalRecord}); err != nil {
-		log.Printf("❌ [DuckDB Insert Error]: Failed to store record %s: %v", record.ID, err)
+		log.Printf("❌ [DuckDB Insert Error]: Failed to store record %s: %v", cleanID, err)
 		return fmt.Errorf("duckdb insert failed for record %s: %w", record.ID, err)
 	}
 

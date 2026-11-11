@@ -262,4 +262,20 @@ func TestMCPServer_VectorSearch(t *testing.T) {
 		}
 		t.Logf("[PASS] MCP API Key authentication enforced and verified.")
 	})
+
+	t.Run("Rejects payload exceeding 128KB limit with HTTP 413", func(t *testing.T) {
+		// Create payload larger than 128 KB
+		largePadding := strings.Repeat("A", 130*1024)
+		largeBody := `{"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"padding": "` + largePadding + `"}}`
+
+		rec := sendRequest(largeBody)
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("Expected HTTP 413 Payload Too Large, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "-32002") {
+			t.Errorf("Expected error code -32002, got: %s", rec.Body.String())
+		}
+		t.Logf("[PASS] 128KB payload limit correctly returned HTTP 413.")
+	})
 }

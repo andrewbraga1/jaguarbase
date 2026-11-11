@@ -9,25 +9,25 @@
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
-**An Open-Source High-Performance Edge Vector Cache for PostgreSQL in Go & DuckDB (SIMD-Accelerated)**
+**An Open-Source High-Performance Edge Vector Cache for Systems of Record & Event Streams in Go & DuckDB (SIMD-Accelerated)**
 
-JaguarBase is an event-driven edge vector cache designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a decoupled bridge between your primary transactional database (PostgreSQL) and your AI context window, offloading compute-intensive vector similarity search to an embedded DuckDB engine while applying stateful PII pseudonymization and heuristic prompt-injection filtering.
+JaguarBase is an event-driven edge vector cache designed from the ground up for Autonomous AI Agents and Edge AI. It acts as a decoupled bridge between your primary transactional systems of record (PostgreSQL, Kafka, Event Streams) and your AI context window, offloading compute-intensive vector similarity search to an embedded DuckDB engine while applying AES-256-GCM encrypted PII pseudonymization and fail-closed prompt-injection filtering.
 
 ---
 
 ## 🧠 The Architectural Thesis: CQRS & Edge Caching
 
-Traditional architectures force AI Agents to perform computationally heavy vector math directly on the primary relational database (e.g., PostgreSQL with `pgvector`), spiking CPU usage and risking the stability of core business systems.
+Traditional architectures force AI Agents to perform computationally heavy vector math directly on the primary relational database or event stream (e.g., PostgreSQL with `pgvector`), spiking CPU usage and risking the stability of core business systems.
 
 **JaguarBase flips the paradigm using CQRS (Command Query Responsibility Segregation):**
-1. **System of Record:** Keep your operational data safe in your primary transactional database.
-2. **Event-Driven Sync:** JaguarBase receives change events (via PostgreSQL `LISTEN/NOTIFY`) and asynchronously embeds records into an embedded DuckDB instance.
+1. **System of Record:** Keep your operational data safe in your primary transactional database or streaming platform.
+2. **Event-Driven Sync:** JaguarBase receives change events (via native PostgreSQL `LISTEN/NOTIFY` or streaming connectors) and asynchronously embeds records into an embedded DuckDB instance.
 3. **Inference at the Edge:** AI Agents query the JaguarBase local cache in milliseconds.
 4. **Result:** Sub-millisecond local query plane and dramatic reduction of CPU overhead on your primary database.
 
 ```mermaid
 graph TD
-    Source[(PostgreSQL\nSystem of Record)] -- 1. Event-Driven Sync --> JB{JaguarBase\nEdge Cache}
+    Source[(System of Record / Event Stream\nPostgreSQL, Kafka, CDC)] -- 1. Event-Driven Sync --> JB{JaguarBase\nEdge Cache}
     JB -- 2. gRPC Plane\n(Sub-10ms) --> Backend[Backend Microservices]
     JB -- 3. MCP Plane\n(JSON-RPC 2.0) --> AI[AI Agents\nClaude, Cursor, Local LLMs]
     style JB fill:#f9a03f,stroke:#333,stroke-width:2px,color:#000
@@ -37,21 +37,27 @@ graph TD
 ## 🚀 Key Features (The Edge AI Appliance)
 
 - **100% Manifest-Driven Architecture:** Configured strictly via `jaguardb.yaml`. You define the schema, JaguarBase adapts dynamically without hardcoded Go structs, decoupling transactional columns from the vector representation.
-- **In-Process Vector Storage:** Powered by DuckDB C++ with SIMD-accelerated exact cosine distance (`array_cosine_distance`) inside a Go wrapper.
+- **In-Process Vector Storage:** Powered by DuckDB C++ with SIMD-accelerated exact cosine distance (`array_cosine_similarity`) inside a Go wrapper.
 - **Zero-Trust Governance Pipeline:**
-  - **Stateful PII Pseudonymization:** Sensitive fields are tokenized via HMAC-SHA256 (`vault_{column}_{hash}`) and cached in Redis with a 24-hour TTL, ensuring plain text is never persisted at rest in DuckDB.
-  - **Heuristic Anti-Injection:** Incoming payloads matching known evasion patterns are flagged (`_is_tainted=true`) and excluded from semantic search (`WHERE _is_tainted=false`).
+  - **Stateful PII Pseudonymization & Encryption at Rest:** Sensitive fields are tokenized via HMAC-SHA256 (`vault_{column}_{hash}`) with 128-bit entropy and encrypted at rest in Redis with **AES-256-GCM** and a 24-hour TTL, ensuring plain text is never persisted at rest in Redis or DuckDB.
+  - **Heuristic Anti-Injection & Unicode Normalization:** Incoming payloads are normalized against invisible Unicode characters (zero-width spaces, null bytes) and matched against injection patterns (`_is_tainted=true`), securely excluding them from semantic search (`WHERE _is_tainted=false`).
   - **HMAC Handoff Proofs:** Responses are signed with HMAC-SHA256 to ensure data tampering is detected downstream.
+  - **Bounded Payloads & Integer Overflow Defense:** Hardened with `http.MaxBytesReader` (128 KB with HTTP 413), bounded manifest parsing (1 MB with overflow detection), explicit database connection pool limits (25 max connections), and GoSec G115 integer overflow guards.
 - **Dual-Plane Protocol:**
-  - **High-Performance Plane (gRPC):** Internal low-latency plane for backend services.
-  - **AI Agent Plane (MCP / JSON-RPC 2.0):** HTTP endpoint for semantic tool calling (`tools/list`, `tools/call`).
+  - **High-Performance Plane (gRPC):** Internal low-latency plane for backend services with optional API Key interceptor.
+  - **AI Agent Plane (MCP / JSON-RPC 2.0):** Standard MCP protocol endpoint (versions 2024-11-05 and 2025-06-18) supporting `initialize`, typed Content Blocks, and structured tool calls.
+
+### ⚖️ Engineering Trade-Offs & Operational Boundaries
+* **Deep Inspection vs. Ingestion Throughput:** Running RE2 anti-injection scanning, Unicode normalization, and AES-256-GCM encryption per row introduces ~0.2ms CPU overhead per record. For maximum batch ingestion speed, governance rules should only be applied to sensitive and untrusted columns declared in `jaguardb.yaml`.
+* **In-Memory Cache vs. Off-Heap Memory:** Go heap stays lean (<10MB), while DuckDB manages off-heap vector buffers bounded by OS page caching and explicit connection limits (25 max connections).
+* **LISTEN/NOTIFY vs. Durable CDC:** The native v1.0 PostgreSQL adapter provides lightweight, trigger-driven real-time streaming with isolated metadata checkpointing. For multi-day offline durability without event loss, durable CDC via Logical Replication / Outbox is on the v1.1 roadmap.
 
 ### The Zero-Trust Pipeline Under the Hood
 Every record that enters or leaves JaguarBase passes through a defensive, fail-closed security pipeline:
 
 ```mermaid
 sequenceDiagram
-    participant Source as PostgreSQL (System of Record)
+    participant Source as System of Record (PostgreSQL / Streams)
     participant JB as JaguarBase Ingestion
     participant Gov as Zero-Trust Governance
     participant DDB as DuckDB (SIMD)

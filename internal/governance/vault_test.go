@@ -39,3 +39,40 @@ func TestVault_GenerateToken_128BitEntropy(t *testing.T) {
 	t.Logf("[PASS] 128-bit Token: %s", token1)
 }
 
+func TestVault_AES256GCM_EncryptionAtRest(t *testing.T) {
+	secret := []byte("high-entropy-master-secret-key-999")
+	vault := governance.NewVaultWithSecret(secret)
+
+	originalPII := "sensitive-cpf-999.888.777-66"
+
+	// 1. Encrypt value
+	ciphertextHex, err := vault.EncryptValue(originalPII)
+	if err != nil {
+		t.Fatalf("Failed to encrypt PII: %v", err)
+	}
+
+	// 2. Ciphertext must NOT contain plaintext
+	if strings.Contains(ciphertextHex, originalPII) {
+		t.Fatalf("CRITICAL SECURITY LEAK: Ciphertext contains raw plaintext!")
+	}
+
+	// 3. Decrypt value
+	decrypted, err := vault.DecryptValue(ciphertextHex)
+	if err != nil {
+		t.Fatalf("Failed to decrypt ciphertext: %v", err)
+	}
+
+	if decrypted != originalPII {
+		t.Fatalf("Decrypted value mismatch: got %q, expected %q", decrypted, originalPII)
+	}
+
+	// 4. Tampered ciphertext must fail (authenticated encryption)
+	tamperedHex := ciphertextHex[:len(ciphertextHex)-2] + "ff"
+	_, err = vault.DecryptValue(tamperedHex)
+	if err == nil {
+		t.Fatalf("Expected tamper detection failure, got nil error")
+	}
+
+	t.Logf("[PASS] AES-256-GCM encryption and authenticated tamper detection validated.")
+}
+

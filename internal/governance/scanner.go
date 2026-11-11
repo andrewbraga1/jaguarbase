@@ -2,6 +2,8 @@ package governance
 
 import "regexp"
 
+var invisibleCharsRegex = regexp.MustCompile("[\u200B\u200C\u200D\uFEFF\u0000\u00AD]")
+
 // Scanner is responsible for detecting prompt injections and malicious payloads in transit.
 type Scanner struct {
 	injectionRegex *regexp.Regexp
@@ -16,7 +18,13 @@ func NewScanner() *Scanner {
 	}
 }
 
+// normalizePayload strips invisible unicode evasion characters (zero-width spaces, soft hyphens, null bytes).
+func normalizePayload(payload string) string {
+	return invisibleCharsRegex.ReplaceAllString(payload, "")
+}
+
 // CheckTaint evaluates the payload and returns true if it contains malicious signatures.
 func (s *Scanner) CheckTaint(payload string) bool {
-	return s.injectionRegex.MatchString(payload)
+	normalized := normalizePayload(payload)
+	return s.injectionRegex.MatchString(normalized)
 }

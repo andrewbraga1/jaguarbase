@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	// pq driver is required for sql.Open to recognize the "postgres" dialect.
 	_ "github.com/lib/pq"
@@ -27,6 +28,11 @@ func NewAdapter(dsn string, tableName string) (DataSource, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to open postgres connection: %w", err)
 		}
+
+		// Defense-in-depth: Bound database connection pool against descriptor and thread exhaustion
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(25)
+		db.SetConnMaxLifetime(5 * time.Minute)
 
 		if err := db.Ping(); err != nil {
 			return nil, fmt.Errorf("failed to ping postgres: %w", err)

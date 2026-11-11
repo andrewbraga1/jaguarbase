@@ -9,25 +9,25 @@
 ![Licença](https://img.shields.io/badge/Licen%C3%A7a-Apache_2.0-blue.svg)
 ![CI](https://github.com/andrewbraga1/jaguarbase/actions/workflows/ci.yml/badge.svg)
 
-**Um Cache Vetorial de Borda e Alta Performance para PostgreSQL em Go & DuckDB (Acelerado por SIMD)**
+**Um Cache Vetorial de Borda e Alta Performance para Sistemas de Registro & Event Streams em Go & DuckDB (Acelerado por SIMD)**
 
-JaguarBase é um cache vetorial na borda orientado a eventos, projetado do zero para Agentes Autônomos de IA e Edge AI. Ele atua como uma ponte desacoplada entre seu banco de dados transacional primário (PostgreSQL) e a janela de contexto da sua IA, descarregando as consultas vetoriais pesadas para um motor embarcado em DuckDB, enquanto aplica pseudonimização de PII em cofre e filtragem heurística de injeção de prompt.
+JaguarBase é um cache vetorial na borda orientado a eventos, projetado do zero para Agentes Autônomos de IA e Edge AI. Ele atua como uma ponte desacoplada entre seus sistemas de registro primários (PostgreSQL, Kafka, Event Streams) e a janela de contexto da sua IA, descarregando as consultas vetoriais pesadas para um motor embarcado em DuckDB, enquanto aplica pseudonimização de PII criptografada com AES-256-GCM em cofre e filtragem fail-closed de injeção de prompt.
 
 ---
 
 ## 🧠 A Tese Arquitetural: CQRS e Cache na Borda
 
-Arquiteturas tradicionais forçam os Agentes de IA a executar cálculos vetoriais pesados diretamente no banco de dados relacional primário (ex: PostgreSQL com `pgvector`), gerando picos de uso de CPU e arriscando a estabilidade dos sistemas centrais de negócios.
+Arquiteturas tradicionais forçam os Agentes de IA a executar cálculos vetoriais pesados diretamente no banco de dados relacional primário ou stream de eventos (ex: PostgreSQL com `pgvector`), gerando picos de uso de CPU e arriscando a estabilidade dos sistemas centrais de negócios.
 
 **O JaguarBase inverte o paradigma usando CQRS (Segregação de Responsabilidade de Comando e Consulta):**
-1. **Sistema de Registro:** Mantenha seus dados seguros no seu banco transacional primário.
-2. **Sincronização por Eventos:** O JaguarBase recebe eventos de alteração (via PostgreSQL `LISTEN/NOTIFY`) e gera vetores assincronamente em uma instância local do DuckDB.
+1. **Sistema de Registro:** Mantenha seus dados seguros no seu banco transacional primário ou plataforma de streaming.
+2. **Sincronização por Eventos:** O JaguarBase recebe eventos de alteração (via PostgreSQL `LISTEN/NOTIFY` nativo ou conectores de streaming) e gera vetores assincronamente em uma instância local do DuckDB.
 3. **Inferência na Borda (Edge):** Agentes de IA consultam o cache local do JaguarBase em milissegundos.
 4. **Resultado:** Plano de consulta local sub-milissegundo e redução drástica da sobrecarga de CPU no seu banco de dados primário.
 
 ```mermaid
 graph TD
-    Source[(PostgreSQL\nSistema de Registro)] -- 1. Sincronização por Eventos --> JB{JaguarBase\nEdge Cache}
+    Source[(Sistema de Registro / Event Stream\nPostgreSQL, Kafka, CDC)] -- 1. Sincronização por Eventos --> JB{JaguarBase\nEdge Cache}
     JB -- 2. Plano gRPC\n(Sub-10ms) --> Backend[Microsserviços de Backend]
     JB -- 3. Plano MCP\n(JSON-RPC 2.0) --> AI[Agentes IA\nClaude, Cursor, LLMs Locais]
     style JB fill:#f9a03f,stroke:#333,stroke-width:2px,color:#000
@@ -37,21 +37,27 @@ graph TD
 ## 🚀 Principais Funcionalidades (O Appliance Edge AI)
 
 - **Arquitetura 100% Dirigida por Manifesto:** Configurado estritamente via `jaguardb.yaml`. Você define o schema, o JaguarBase se adapta dinamicamente sem *structs* fixos em Go, desacoplando as colunas transacionais do schema vetorial.
-- **Armazenamento Vetorial In-Process:** Movido por DuckDB C++ com distância de cosseno exata acelerada por SIMD (`array_cosine_distance`) dentro de um wrapper Go.
+- **Armazenamento Vetorial In-Process:** Movido por DuckDB C++ com distância de cosseno exata acelerada por SIMD (`array_cosine_similarity`) dentro de um wrapper Go.
 - **Pipeline de Governança Zero-Trust:**
-  - **Pseudonimização com Cofre Redis:** Campos sensíveis são tokenizados via HMAC-SHA256 (`vault_{coluna}_{hash}`) e armazenados temporariamente no Redis com TTL de 24 horas, garantindo que o texto original não persista em repouso no DuckDB.
-  - **Filtro Heurístico Anti-Injeção:** Registros contendo padrões de evasão conhecidos são sinalizados (`_is_tainted=true`) durante a ingestão e excluídos da busca semântica (`WHERE _is_tainted=false`).
+  - **Pseudonimização com Criptografia em Repouso no Cofre Redis:** Campos sensíveis são tokenizados via HMAC-SHA256 (`vault_{coluna}_{hash}`) com 128 bits de entropia e criptografados em repouso no Redis com **AES-256-GCM** e TTL de 24 horas, garantindo que o texto original não persista em claro no Redis nem no DuckDB.
+  - **Filtro Heurístico Anti-Injeção e Normalização Unicode:** Payloads são normalizados contra caracteres invisíveis Unicode (zero-width spaces, null bytes) e avaliados contra padrões de evasão (`_is_tainted=true`), sendo excluídos de forma segura da busca semântica (`WHERE _is_tainted=false`).
   - **HMAC Handoff Proofs:** Respostas são assinadas com HMAC-SHA256 para detecção de adulteração downstream.
+  - **Limites Estritos de Payload e Defesa Contra Integer Overflow:** Protegido com `http.MaxBytesReader` (128 KB com HTTP 413), teto em arquivo de manifesto (1 MB com detecção de overflow), limites explícitos de pool de conexões (máximo de 25 conexões) e proteções GoSec G115.
 - **Protocolo de Plano Duplo:**
-  - **Plano de Alta Performance (gRPC):** Plano interno de baixa latência para microsserviços.
-  - **Plano de Agentes IA (MCP / JSON-RPC 2.0):** Endpoint HTTP para chamadas semânticas de ferramentas (`tools/list`, `tools/call`).
+  - **Plano de Alta Performance (gRPC):** Plano interno de baixa latência para microsserviços com interceptor opcional de API Key.
+  - **Plano de Agentes IA (MCP / JSON-RPC 2.0):** Endpoint com protocolo padrão MCP (versões 2024-11-05 e 2025-06-18), com suporte a handshake `initialize`, Content Blocks tipados e chamadas de ferramenta estruturadas.
+
+### ⚖️ Trade-offs de Engenharia e Limites Operacionais
+* **Inspeção Profunda vs. Vazão de Ingestão:** Executar varredura regex anti-injeção RE2, normalização Unicode e criptografia AES-256-GCM por linha introduz um custo de CPU de ~0.2ms por registro. Para velocidade máxima de carga, aplique regras de governança estritamente nas colunas sensíveis e não confiáveis mapeadas no `jaguardb.yaml`.
+* **Memória em Cache vs. Memória Off-Heap:** A heap gerenciada pelo Go permanece enxuta (<10MB), enquanto o DuckDB gerencia buffers vetoriais nativos fora da heap delimitados pelo page cache do Linux e limites estritos de conexões (máximo de 25 conexões simultâneas).
+* **LISTEN/NOTIFY vs. CDC Durável:** O adaptador nativo PostgreSQL v1.0 provê streaming leve em tempo real via triggers com checkpointing isolado em metadados. Para tolerância a paradas de múltiplos dias sem perda de eventos legados, conectores CDC duráveis via Logical Replication / Outbox estão no roadmap da v1.1.
 
 ### O Pipeline Zero-Trust por Baixo do Capô
 Todo registro que entra ou sai do JaguarBase passa por um pipeline defensivo e seguro por padrão (fail-closed):
 
 ```mermaid
 sequenceDiagram
-    participant Source as PostgreSQL (Sistema de Registro)
+    participant Source as Sistema de Registro (PostgreSQL / Streams)
     participant JB as Ingestão JaguarBase
     participant Gov as Governança Zero-Trust
     participant DDB as DuckDB (SIMD)

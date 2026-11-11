@@ -122,4 +122,27 @@ sources:
 			t.Fatalf("Expected Fail-Closed error when no primary key is defined, got nil")
 		}
 	})
+
+	t.Run("Fail-Closed: Rejects manifest exceeding maximum allowed size", func(t *testing.T) {
+		tmp, err := os.CreateTemp("", "oversized_manifest_*.yaml")
+		if err != nil {
+			t.Fatalf("Failed to create temp file: %v", err)
+		}
+		defer os.Remove(tmp.Name())
+
+		// Write MaxManifestSizeBytes + 1 byte
+		oversized := make([]byte, config.MaxManifestSizeBytes+1)
+		for i := range oversized {
+			oversized[i] = '#'
+		}
+		if _, err := tmp.Write(oversized); err != nil {
+			t.Fatalf("Failed to write oversized manifest: %v", err)
+		}
+		tmp.Close()
+
+		_, err = config.LoadManifest(tmp.Name())
+		if err == nil {
+			t.Fatalf("Expected Fail-Closed error on oversized manifest, got nil")
+		}
+	})
 }

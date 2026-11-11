@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,9 @@ import (
 )
 
 var identifierRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// MaxManifestSizeBytes defines the upper bound for manifest YAML files (1 MB).
+const MaxManifestSizeBytes = 1 << 20
 
 // ColumnDef defines the governance rules and types for a specific column.
 type ColumnDef struct {
@@ -43,12 +47,23 @@ type SecurityDef struct {
 	MCPInFlightLimit int32 `yaml:"mcp_in_flight_limit" json:"mcp_in_flight_limit"`
 }
 
-// LoadManifest reads and parses the YAML configuration file.
+// LoadManifest reads and parses the YAML configuration file with bounded size protection.
 func LoadManifest(path string) (*Manifest, error) {
 	cleanPath := filepath.Clean(path)
-	data, err := os.ReadFile(cleanPath)
+	file, err := os.Open(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open manifest file: %w", err)
+	}
+	defer file.Close()
+
+	// Defense-in-depth: Bound manifest parsing memory with +1 byte overflow detection
+	limitedReader := io.LimitReader(file, MaxManifestSizeBytes+1)
+	data, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest file: %w", err)
+	}
+	if len(data) > MaxManifestSizeBytes {
+		return nil, fmt.Errorf("manifest file exceeds maximum allowed size (%d bytes): fail-closed", MaxManifestSizeBytes)
 	}
 
 	var manifest Manifest

@@ -178,3 +178,39 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 ### 17. Precisão na Métricas de Memória
 * **Localização:** `README.md`, `README.pt-BR.md`
 * **Remediação Implementada:** Documentada claramente a fronteira entre a Heap gerenciada pelo Go (<10MB) e a memória nativa C++ do DuckDB alocada fora da heap via CGO, detalhando os limites do buffer pool do DuckDB e o cache de páginas do kernel Linux.
+
+---
+
+## 🛡️ Rodada 3 de Hardening: Diretrizes de Engenharia, Limites de Payload e Cifragem AES-256-GCM
+
+### 18. Leitor de Manifesto Delimitado com Detecção de Overflow `+1 Byte`
+* **Localização:** `internal/config/manifest.go`, `internal/config/manifest_test.go`
+* **Remediação Implementada:** Substituído o uso de `os.ReadFile` por `io.LimitReader(file, MaxManifestSizeBytes + 1)` (teto de 1 MB), prevenindo exaustão de memória no boot e detectando arquivos que ultrapassem o limite estipulado.
+
+### 19. Retorno Estrito de HTTP 413 e JSON-RPC -32002 no Servidor MCP
+* **Localização:** `internal/server/mcp.go`, `internal/server/mcp_test.go`
+* **Remediação Implementada:** Tratamento formal de `*http.MaxBytesError` disparado pelo `http.MaxBytesReader`, emitindo status HTTP `413 Payload Too Large` e código JSON-RPC `-32002` em vez de erro genérico de parsing.
+
+### 20. Delimitação de Pool de Conexões em Adaptadores Externos
+* **Localização:** `internal/ingestion/factory.go`
+* **Remediação Implementada:** Configurado o pool de conexões do PostgreSQL com `SetMaxOpenConns(25)`, `SetMaxIdleConns(25)` e `SetConnMaxLifetime(5 * time.Minute)`, espelhando a disciplina aplicada ao DuckDB contra esgotamento de descritores de arquivo e conexões.
+
+### 21. Normalização Unicode e Defesa Anti-Evasão por Caracteres Invisíveis
+* **Localização:** `internal/governance/scanner.go`, `internal/governance/governance_test.go`
+* **Remediação Implementada:** Higienização prévia de payloads para remoção de zero-width spaces (`\u200B`, `\u200C`, `\u200D`, `\uFEFF`), hífens suaves (`\u00AD`) e null bytes (`\x00`), impedindo bypasses de regex com caracteres ocultos.
+
+### 22. Governança Fail-Closed para Payloads Estruturados e Aninhados
+* **Localização:** `internal/dynamic/processor.go`, `internal/dynamic/processor_test.go`
+* **Remediação Implementada:** Fechado o bypass estrutural em que campos JSON aninhados ou fatias ignoravam a varredura de `untrusted_input`. Valores estruturados são serializados deterministicamente em JSON e inspecionados com segurança fail-closed.
+
+### 23. Sanitização Universal de Logs contra CRLF Injection
+* **Localização:** `internal/ingestion/pipeline.go`, `internal/ingestion/postgres_adapter.go`
+* **Remediação Implementada:** Sanitização de todas as saídas de log contendo dados externos (`record.ID`, `tableName`, `model`) com remoção de `\r` e `\n` para prevenir falsificação e injeção de logs.
+
+### 24. Criptografia em Repouso no Cofre de PII com AES-256-GCM
+* **Localização:** `internal/governance/vault.go`, `internal/governance/vault_test.go`
+* **Remediação Implementada:** Os dados em claro de PII são criptografados com **AES-256-GCM** autenticado antes de serem gravados no Redis (usando chave derivada de `JAGUARBASE_HMAC_SECRET`), assegurando que nenhum dado sensível resida em claro em repouso.
+
+### 25. Quality Gate de Segurança no CI sem Supressão de Erro
+* **Localização:** `audit.sh`, `.github/workflows/ci.yml`
+* **Remediação Implementada:** Removidos operadores `|| true` das varreduras de Trivy, GoSec e Govulncheck, alinhado o nome da tabela do manifesto de teste de carga (`support_tickets`) e integrado o Govulncheck na esteira de CI.

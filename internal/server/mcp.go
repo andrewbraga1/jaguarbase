@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -101,10 +102,18 @@ func (s *MCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce 128 KB max payload to protect JSON decoder memory under load
-	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+	const maxPayloadBytes = 128 << 10
+	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 
 	var req MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"jsonrpc": "2.0", "error": {"code": -32002, "message": "Payload limit exceeded (128 KB max)"}}`))
+			return
+		}
 		s.sendError(w, req.ID, -32700, "Parse error")
 		return
 	}

@@ -58,7 +58,7 @@ func (p *PostgresAdapter) Watch(ctx context.Context, events chan<- RawRecord) er
 		close(p.ready)
 	}
 
-	log.Printf("🎧 Postgres Adapter: Listening for '%s' on table '%s' via LISTEN/NOTIFY...", p.channel, p.tableName)
+	log.Printf("🎧 Postgres Adapter: Listening for '%s' on table '%s' via LISTEN/NOTIFY...", sanitizeLog(p.channel), sanitizeLog(p.tableName))
 
 	for {
 		select {
@@ -71,11 +71,12 @@ func (p *PostgresAdapter) Watch(ctx context.Context, events chan<- RawRecord) er
 
 			// notification.Extra contains the Record ID emitted by the trigger
 			recordID := notification.Extra
+			cleanRecordID := sanitizeLog(recordID)
 			record, err := p.fetchRecordDynamic(ctx, recordID)
 			if err != nil {
 				// If record is not found in Postgres, it indicates the record was DELETED!
 				if strings.Contains(err.Error(), "not found") {
-					log.Printf("🗑️ [Postgres Adapter] Record %s deleted in PostgreSQL; propagating tombstone to vector cache.", recordID)
+					log.Printf("🗑️ [Postgres Adapter] Record %s deleted in PostgreSQL; propagating tombstone to vector cache.", cleanRecordID)
 					events <- RawRecord{
 						ID:        recordID,
 						Table:     p.tableName,
@@ -83,7 +84,7 @@ func (p *PostgresAdapter) Watch(ctx context.Context, events chan<- RawRecord) er
 					}
 					continue
 				}
-				log.Printf("❌ [Postgres Adapter] Failed to fetch record %s: %v", recordID, err)
+				log.Printf("❌ [Postgres Adapter] Failed to fetch record %s: %v", cleanRecordID, err)
 				continue
 			}
 

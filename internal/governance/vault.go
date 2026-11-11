@@ -2,10 +2,14 @@ package governance
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -59,6 +63,51 @@ func NewVaultWithSecret(secret []byte) *Vault {
 	}
 }
 
+// EncryptValue encrypts plaintext using AES-256-GCM derived from the vault secret.
+func (v *Vault) EncryptValue(raw string) (string, error) {
+	key := sha256.Sum256(v.secret)
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	ciphertext := gcm.Seal(nonce, nonce, []byte(raw), nil)
+	return hex.EncodeToString(ciphertext), nil
+}
+
+// DecryptValue decrypts an AES-256-GCM hex string using the vault secret.
+func (v *Vault) DecryptValue(ciphertextHex string) (string, error) {
+	ciphertext, err := hex.DecodeString(ciphertextHex)
+	if err != nil {
+		return "", fmt.Errorf("invalid hex ciphertext: %w", err)
+	}
+	key := sha256.Sum256(v.secret)
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	if len(ciphertext) < gcm.NonceSize() {
+		return "", fmt.Errorf("ciphertext payload too short")
+	}
+	nonce, cipherBytes := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
+	plaintext, err := gcm.Open(nil, nonce, cipherBytes, nil)
+	if err != nil {
+		return "", fmt.Errorf("decryption failed (authentication tag mismatch): %w", err)
+	}
+	return string(plaintext), nil
+}
+
 // GenerateToken derives a deterministic token with 128 bits of entropy (32 hex characters).
 func (v *Vault) GenerateToken(columnName string, raw string) string {
 	if raw == "" {
@@ -76,8 +125,8 @@ func (v *Vault) GenerateToken(columnName string, raw string) string {
 	return fmt.Sprintf("vault_%s_%s", col, hex.EncodeToString(sum)[:32])
 }
 
-// Tokenize takes a column name and a raw sensitive string, stores it securely,
-// and returns an agnostic, HMAC-protected deterministic token: vault_{column}_{hash}.
+// Tokenize takes a column name and a raw sensitive string, encrypts it with AES-256-GCM,
+// stores it securely in Redis, and returns an HMAC-protected deterministic token: vault_{column}_{hash}.
 func (v *Vault) Tokenize(ctx context.Context, columnName string, raw string) (string, error) {
 	if raw == "" {
 		return "", nil // Edge case: do not mask empty strings
@@ -85,12 +134,29 @@ func (v *Vault) Tokenize(ctx context.Context, columnName string, raw string) (st
 
 	token := v.GenerateToken(columnName, raw)
 
-	// Store the real value in Redis
+	// Encrypt the sensitive value at rest before persisting in Redis
+	encryptedVal, err := v.EncryptValue(raw)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt PII value: %w", err)
+	}
+
+	// Store the encrypted value in Redis
 	key := vaultKeyPrefix + token
-	err := v.client.Set(ctx, key, raw, v.ttl).Err()
+	err = v.client.Set(ctx, key, encryptedVal, v.ttl).Err()
 	if err != nil {
 		return "", fmt.Errorf("failed to store token in vault: %w", err)
 	}
 
 	return token, nil
+}
+
+// Detokenize retrieves and decrypts the original PII value from the vault.
+func (v *Vault) Detokenize(ctx context.Context, token string) (string, error) {
+	key := vaultKeyPrefix + token
+	encryptedVal, err := v.client.Get(ctx, key).Result()
+	if err != nil {
+		return "", fmt.Errorf("token not found in vault: %w", err)
+	}
+
+	return v.DecryptValue(encryptedVal)
 }

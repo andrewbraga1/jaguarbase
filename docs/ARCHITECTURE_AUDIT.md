@@ -179,3 +179,39 @@ However, an in-depth semantic audit identified **critical architectural misalign
 ### 17. Memory Accounting Accuracy
 * **Target Components:** `README.md`, `README.pt-BR.md`
 * **Remediation Implemented:** Documented the boundary between Go runtime managed heap (<10MB) and DuckDB C++ native off-heap memory, explaining DuckDB buffer pool limits and Linux kernel page cache mechanics.
+
+---
+
+## 🛡️ Round 3 Hardening: Engineering Directives, Payload Bounds & AES-256-GCM Vault Security
+
+### 18. Bounded Manifest Reader with +1 Byte Overflow Detection
+* **Target Components:** `internal/config/manifest.go`, `internal/config/manifest_test.go`
+* **Remediation Implemented:** Replaced unbounded `os.ReadFile` with `io.LimitReader(file, MaxManifestSizeBytes + 1)` (1 MB ceiling), preventing memory exhaustion attacks while deterministically detecting files that exceed size limits.
+
+### 19. Strict HTTP 413 & JSON-RPC -32002 Payload Enforcement
+* **Target Components:** `internal/server/mcp.go`, `internal/server/mcp_test.go`
+* **Remediation Implemented:** Captured `*http.MaxBytesError` from `http.MaxBytesReader` to emit explicit HTTP `413 Payload Too Large` responses with standard JSON-RPC code `-32002` rather than generic parse errors.
+
+### 20. Database Connection Pool Bounds on External Adapters
+* **Target Components:** `internal/ingestion/factory.go`
+* **Remediation Implemented:** Bound PostgreSQL connection pools with `SetMaxOpenConns(25)`, `SetMaxIdleConns(25)`, and `SetConnMaxLifetime(5 * time.Minute)` matching DuckDB engine settings to prevent socket and thread exhaustion.
+
+### 21. Unicode Normalization & Invisible Character Anti-Evasion
+* **Target Components:** `internal/governance/scanner.go`, `internal/governance/governance_test.go`
+* **Remediation Implemented:** Preprocessed incoming strings to strip invisible zero-width spaces (`\u200B`, `\u200C`, `\u200D`, `\uFEFF`), soft hyphens (`\u00AD`), and null bytes (`\x00`), preventing regex bypasses through hidden characters.
+
+### 22. Structured & Nested Payload Fail-Closed Governance
+* **Target Components:** `internal/dynamic/processor.go`, `internal/dynamic/processor_test.go`
+* **Remediation Implemented:** Closed the structural bypass where nested JSON maps or slices bypassed `untrusted_input` scanners. Structured values are deterministically serialized to JSON and evaluated by the scanner, enforcing fail-closed security.
+
+### 23. Universal Log CRLF Sanitization
+* **Target Components:** `internal/ingestion/pipeline.go`, `internal/ingestion/postgres_adapter.go`
+* **Remediation Implemented:** Sanitized all log outputs containing external identifiers (`record.ID`, `tableName`, `model`) by stripping `\r` and `\n` to prevent Log Injection / CRLF spoofing.
+
+### 24. AES-256-GCM Encryption at Rest for PII Vault
+* **Target Components:** `internal/governance/vault.go`, `internal/governance/vault_test.go`
+* **Remediation Implemented:** Raw PII strings are encrypted with authenticated **AES-256-GCM** using a key derived from `JAGUARBASE_HMAC_SECRET` prior to storage in Redis, ensuring sensitive data is never stored in plaintext at rest.
+
+### 25. CI Security Quality Gate Without Error Suppression
+* **Target Components:** `audit.sh`, `.github/workflows/ci.yml`
+* **Remediation Implemented:** Removed `|| true` suppressions from Trivy, GoSec, and Govulncheck, aligned the CI test manifest table name (`support_tickets`), and configured Govulncheck directly in the CI pipeline.
