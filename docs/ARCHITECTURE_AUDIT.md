@@ -215,3 +215,9 @@ However, an in-depth semantic audit identified **critical architectural misalign
 ### 25. CI Security Quality Gate Without Error Suppression
 * **Target Components:** `audit.sh`, `.github/workflows/ci.yml`
 * **Remediation Implemented:** Removed `|| true` suppressions from Trivy, GoSec, and Govulncheck, aligned the CI test manifest table name (`support_tickets`), and configured Govulncheck directly in the CI pipeline.
+
+### 26. Zero-CVE Dependency Gate (GO-2026-6865 Remediation)
+* **Target Components:** `go.mod`, `go.sum`
+* **Root Cause:** Transitive dependency `github.com/klauspost/compress` at `v1.18.7` (pulled by DuckDB driver) was vulnerable to panic/DoS on two-block frames in FSE decompression.
+* **Remediation Implemented:** Explicitly upgraded `github.com/klauspost/compress` to `v1.20.2` in `go.mod`, verified clean Govulncheck (0 vulnerabilities called), and confirmed full CI pass.
+

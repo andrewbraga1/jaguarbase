@@ -214,3 +214,8 @@ Contudo, a auditoria funcional identificou **desconexões semânticas críticas 
 ### 25. Quality Gate de Segurança no CI sem Supressão de Erro
 * **Localização:** `audit.sh`, `.github/workflows/ci.yml`
 * **Remediação Implementada:** Removidos operadores `|| true` das varreduras de Trivy, GoSec e Govulncheck, alinhado o nome da tabela do manifesto de teste de carga (`support_tickets`) e integrado o Govulncheck na esteira de CI.
+
+### 26. Quality Gate Zero-CVE em Dependências (Remediação de GO-2026-6865)
+* **Localização:** `go.mod`, `go.sum`
+* **Remediação Implementada:** A dependência transitiva `github.com/klauspost/compress@v1.18.7` (trazida pelo driver DuckDB) possuía vulnerabilidade de pânico/DoS (GO-2026-6865). O módulo foi atualizado explicitamente para `v1.20.2` no `go.mod`, zerando os apontamentos do Govulncheck no pipeline estrito de CI.
+
